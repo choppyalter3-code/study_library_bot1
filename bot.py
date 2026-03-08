@@ -81,6 +81,63 @@ class Material:
 # ----------------------------
 
 class Database:
+    def get_category_by_name(self, category_name: str) -> Optional[Category]:
+        connection = self._get_connection()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT category_id, name, icon, sort_order
+                FROM categories
+                WHERE lower(name) = lower(?)
+                LIMIT 1
+                """,
+                (category_name.strip(),),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+
+            return Category(
+                category_id=int(row["category_id"]),
+                name=str(row["name"]),
+                icon=str(row["icon"]),
+                sort_order=int(row["sort_order"]),
+            )
+        finally:
+            connection.close()
+
+    def upsert_destination(
+        self,
+        category_id: int,
+        chat_id: int,
+        thread_id: int,
+        title: str,
+    ) -> None:
+        connection = self._get_connection()
+        try:
+            cursor = connection.cursor()
+
+            cursor.execute(
+                """
+                DELETE FROM destinations
+                WHERE category_id = ?
+                """,
+                (category_id,),
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO destinations(category_id, chat_id, thread_id, title)
+                VALUES (?, ?, ?, ?)
+                """,
+                (category_id, chat_id, thread_id, title),
+            )
+
+            connection.commit()
+        finally:
+            connection.close()
+
     def __init__(self, database_path: str) -> None:
         self.database_path = database_path
         self._init_database()
@@ -632,6 +689,56 @@ async def register_group_command(update: Update, context: ContextTypes.DEFAULT_T
     )
 
 
+async def bind_category_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat is None or update.effective_message is None:
+        return
+
+    if not require_admin(update):
+        return
+
+    if update.effective_chat.type == "private":
+        await update.effective_message.reply_text(
+            "Эту команду нужно писать в теме группы, а не в личке."
+        )
+        return
+
+    if update.effective_message.message_thread_id is None:
+        await update.effective_message.reply_text(
+            "Эту команду нужно писать внутри конкретной темы форума."
+        )
+        return
+
+    if not context.args:
+        await update.effective_message.reply_text(
+            "Использование: /bind_category Домашки"
+        )
+        return
+
+    category_name = " ".join(context.args).strip()
+    category = db.get_category_by_name(category_name)
+
+    if category is None:
+        await update.effective_message.reply_text(
+            f"Категория '{category_name}' не найдена."
+        )
+        return
+
+    chat_id = update.effective_chat.id
+    thread_id = update.effective_message.message_thread_id
+    topic_title = f"{category.name} → thread {thread_id}"
+
+    db.upsert_destination(
+        category_id=category.category_id,
+        chat_id=chat_id,
+        thread_id=thread_id,
+        title=topic_title,
+    )
+
+    await update.effective_message.reply_text(
+        f"Готово ✅\nКатегория '{category.name}' теперь привязана к этой теме."
+    )
+
+
 # ----------------------------
 # Меню через callback-кнопки
 # ----------------------------
@@ -865,24 +972,36 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 # ----------------------------
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Все текстовые ответы от админа в личке — сюда
     if update.effective_message is None or update.effective_user is None:
         return
 
     if not is_private_chat(update):
         return
 
-    if not require_admin(update):
-        return
-
     text = (update.effective_message.text or "").strip()
     if not text:
         return
 
-    # Поиск
+    is_admin = require_admin(update)
+
+    # Поиск доступен всем
     if context.user_data.get("awaiting_search_text") is True:
         context.user_data["awaiting_search_text"] = False
         await handle_search_text(update, context, text)
+        return
+
+    # Всё ниже — только для админа
+    if not is_admin:
+        await update.effective_message.reply_text(
+            "Используй кнопки 📚 Библиотека или 🔎 Поиск.",
+            reply_markup=main_menu_keyboard(is_admin=False),
+        )
+        return
+
+    # Последний шаг добавления: если файла нет и пользователь написал "-"
+    if context.user_data.get("awaiting_add_file") is True and text == "-":
+        context.user_data["awaiting_add_file"] = False
+        await finalize_add_material(update, context, file_id="")
         return
 
     # Добавление: заголовок
@@ -929,36 +1048,9 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         context.user_data["awaiting_add_file"] = True
         return
 
-    # Если человек пишет что-то вне сценария — просто покажем меню
     await update.effective_message.reply_text(
         "Я понимаю команды через кнопки. Открой меню:",
-        reply_markup=main_menu_keyboard(),
-    )
-
-
-async def handle_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
-    # Разберём запрос: слова + теги
-    query = text.strip()
-    # Если человек ввёл несколько токенов, можно искать целиком; это MVP
-    results = db.search_materials(query=query, limit=20)
-
-    if not results:
-        await update.effective_message.reply_text(
-            "Ничего не нашёл. Попробуй другие слова или #теги.",
-            reply_markup=back_to_main_keyboard(),
-        )
-        return
-
-    keyboard: List[List[InlineKeyboardButton]] = []
-    for material in results:
-        keyboard.append(
-            [InlineKeyboardButton(text=material.title[:45], callback_data=f"MATERIAL_{material.material_id}")]
-        )
-    keyboard.append([InlineKeyboardButton(text="⬅️ В меню", callback_data="MENU_MAIN")])
-
-    await update.effective_message.reply_text(
-        f"Нашёл материалов: {len(results)}. Выбери:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=main_menu_keyboard(is_admin=True),
     )
 
 
@@ -981,13 +1073,7 @@ async def file_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     message: Message = update.effective_message
 
-    # Разрешим “-” текстом (без файла)
-    if message.text is not None and message.text.strip() == "-":
-        context.user_data["awaiting_add_file"] = False
-        await finalize_add_material(update, context, file_id="")
-        return
-
-    # Документом
+    # Если отправили документ
     if message.document is not None:
         file_id = message.document.file_id
         context.user_data["awaiting_add_file"] = False
@@ -996,7 +1082,7 @@ async def file_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     # Если прислали не документ
     await update.effective_message.reply_text(
-        "Нужен именно файл-документ (как документ), или напиши '-' чтобы добавить без файла."
+        "Нужен файл как документ, или напиши '-' чтобы добавить без файла."
     )
 
 
@@ -1102,6 +1188,7 @@ def build_application() -> Application:
     # Команды
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("register", register_group_command))
+    application.add_handler(CommandHandler("bind_category", bind_category_command))
 
     # Кнопки меню
     application.add_handler(CallbackQueryHandler(menu_callback))
