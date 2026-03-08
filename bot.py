@@ -140,21 +140,35 @@ class Database:
                 """
             )
 
-            # Добавим админа (тебя)
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS destinations (
+                    destination_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category_id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL,
+                    thread_id INTEGER NOT NULL,
+                    title TEXT NOT NULL
+                )
+                """
+            )
+
             cursor.execute(
                 "INSERT OR IGNORE INTO admins(user_id) VALUES (?)",
                 (ADMIN_USER_ID,),
             )
 
-            # Если категорий нет — создадим стартовые
             cursor.execute("SELECT COUNT(*) AS c FROM categories")
             count = int(cursor.fetchone()["c"])
+
             if count == 0:
                 starter_categories = [
-                    ("Лекции", "📖", 1),
-                    ("Практика", "🧪", 2),
+                    ("Объявления", "📢", 1),
+                    ("Лекции", "📚", 2),
                     ("Домашки", "📝", 3),
-                    ("Ссылки", "🔗", 4),
+                    ("Материалы", "📂", 4),
+                    ("Дедлайны", "📅", 5),
+                    ("Экзамен", "🧠", 6),
+                    ("Полезные ссылки", "🔗", 7),
                 ]
                 cursor.executemany(
                     "INSERT INTO categories(name, icon, sort_order) VALUES (?, ?, ?)",
@@ -199,6 +213,26 @@ class Database:
             )
             rows = cursor.fetchall()
             return [(int(row["chat_id"]), str(row["title"])) for row in rows]
+        finally:
+            connection.close()
+
+    def get_destination_for_category(self, category_id: int):
+        connection = self._get_connection()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT chat_id, thread_id
+                FROM destinations
+                WHERE category_id = ?
+                LIMIT 1
+                """,
+                (category_id,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return int(row["chat_id"]), int(row["thread_id"])
+            return None
         finally:
             connection.close()
 
@@ -330,7 +364,6 @@ class Database:
             connection.close()
 
     def search_materials(self, query: str, limit: int = 20) -> List[Material]:
-        # Простой поиск по title/description/tags; SQLite LIKE
         q = f"%{query.strip().lower()}%"
         connection = self._get_connection()
         try:
@@ -365,10 +398,7 @@ class Database:
             return results
         finally:
             connection.close()
-
-
 db = Database(DATABASE_PATH)
-
 
 # ----------------------------
 # Утилиты
@@ -436,12 +466,17 @@ def normalize_tags(raw: str) -> str:
 # Меню (кнопки)
 # ----------------------------
 
-def main_menu_keyboard() -> InlineKeyboardMarkup:
+def main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton(text="📚 Библиотека", callback_data="MENU_LIBRARY")],
         [InlineKeyboardButton(text="🔎 Поиск", callback_data="MENU_SEARCH")],
-        [InlineKeyboardButton(text="➕ Добавить материал", callback_data="MENU_ADD")],
     ]
+
+    if is_admin:
+        keyboard.append(
+            [InlineKeyboardButton(text="➕ Добавить материал", callback_data="MENU_ADD")]
+        )
+
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -467,23 +502,34 @@ def categories_keyboard() -> InlineKeyboardMarkup:
 
 
 def materials_keyboard(category_id: int) -> InlineKeyboardMarkup:
+
     materials = db.list_materials_by_category(category_id)
+
     keyboard: List[List[InlineKeyboardButton]] = []
-    for material in materials[:30]:
+
+    if not materials:
         keyboard.append(
-            [
-                InlineKeyboardButton(
-                    text=material.title[:45],
-                    callback_data=f"MATERIAL_{material.material_id}",
-                )
-            ]
+            [InlineKeyboardButton(text="(Материалов пока нет)", callback_data="NOOP")]
         )
+    else:
+        for material in materials[:30]:
+            title = material.title if material.title else "Без названия"
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=title[:45],
+                        callback_data=f"MATERIAL_{material.material_id}",
+                    )
+                ]
+            )
+
     keyboard.append(
         [
             InlineKeyboardButton(text="⬅️ К категориям", callback_data="MENU_LIBRARY"),
             InlineKeyboardButton(text="🏠 В меню", callback_data="MENU_MAIN"),
         ]
     )
+
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -557,13 +603,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not is_private_chat(update):
         return
 
-    if not require_admin(update):
-        await deny_if_not_admin(update)
-        return
+    is_admin = require_admin(update)
 
     await update.effective_message.reply_text(
         "Главное меню:",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=main_menu_keyboard(is_admin=is_admin),
     )
 
 
@@ -602,18 +646,21 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not is_private_chat(update):
         return
 
-    if not require_admin(update):
-        await query.edit_message_text("Доступ только для администратора.")
-        return
-
+    is_admin = require_admin(update)
     data = query.data or ""
 
     if data == "MENU_MAIN":
-        await query.edit_message_text("Главное меню:", reply_markup=main_menu_keyboard())
+        await query.edit_message_text(
+            "Главное меню:",
+            reply_markup=main_menu_keyboard(is_admin=is_admin),
+        )
         return
 
     if data == "MENU_LIBRARY":
-        await query.edit_message_text("Выбери вкладку/категорию:", reply_markup=categories_keyboard())
+        await query.edit_message_text(
+            "Выбери вкладку/категорию:",
+            reply_markup=categories_keyboard(),
+        )
         return
 
     if data == "MENU_SEARCH":
@@ -628,7 +675,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if data == "MENU_ADD":
-        # Старт мастера добавления
+        if not is_admin:
+            await query.answer(
+                "Только администратор может добавлять материалы",
+                show_alert=True,
+            )
+            return
+
         categories = db.list_categories()
         keyboard: List[List[InlineKeyboardButton]] = []
         for category in categories:
@@ -652,7 +705,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         category_id = int(data.replace("CATEGORY_", "").strip())
         category = db.get_category(category_id)
         if category is None:
-            await query.edit_message_text("Категория не найдена.", reply_markup=categories_keyboard())
+            await query.edit_message_text(
+                "Категория не найдена.",
+                reply_markup=categories_keyboard(),
+            )
             return
 
         context.user_data["last_category_id"] = category_id
@@ -666,10 +722,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         material_id = int(data.replace("MATERIAL_", "").strip())
         material = db.get_material(material_id)
         if material is None:
-            await query.edit_message_text("Материал не найден.", reply_markup=back_to_main_keyboard())
+            await query.edit_message_text(
+                "Материал не найден.",
+                reply_markup=back_to_main_keyboard(),
+            )
             return
 
-        # Запомним откуда пришли, чтобы кнопка “назад” работала
         context.user_data["last_material_category_id"] = material.category_id
 
         await query.edit_message_text(
@@ -683,11 +741,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if data == "BACK_FROM_MATERIAL":
         category_id = int(context.user_data.get("last_material_category_id", 0))
         if category_id <= 0:
-            await query.edit_message_text("Выбери категорию:", reply_markup=categories_keyboard())
+            await query.edit_message_text(
+                "Выбери категорию:",
+                reply_markup=categories_keyboard(),
+            )
             return
+
         category = db.get_category(category_id)
         name = category.name if category else "Категория"
         icon = category.icon if category else "📚"
+
         await query.edit_message_text(
             f"{icon} {name}\nМатериалы:",
             reply_markup=materials_keyboard(category_id),
@@ -695,10 +758,20 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if data.startswith("SEND_"):
+        if not is_admin:
+            await query.answer(
+                "Только администратор может отправлять материалы в группу",
+                show_alert=True,
+            )
+            return
+
         material_id = int(data.replace("SEND_", "").strip())
         material = db.get_material(material_id)
         if material is None:
-            await query.edit_message_text("Материал не найден.", reply_markup=back_to_main_keyboard())
+            await query.edit_message_text(
+                "Материал не найден.",
+                reply_markup=back_to_main_keyboard(),
+            )
             return
 
         await query.edit_message_text(
@@ -708,10 +781,19 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if data.startswith("SENDTO_"):
-        # SENDTO_{material_id}_{chat_id}
+        if not is_admin:
+            await query.answer(
+                "Только администратор может отправлять материалы в группу",
+                show_alert=True,
+            )
+            return
+
         parts = data.split("_", 2)
         if len(parts) != 3:
-            await query.edit_message_text("Некорректная кнопка.", reply_markup=back_to_main_keyboard())
+            await query.edit_message_text(
+                "Некорректная кнопка.",
+                reply_markup=back_to_main_keyboard(),
+            )
             return
 
         material_id = int(parts[1])
@@ -719,7 +801,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         material = db.get_material(material_id)
         if material is None:
-            await query.edit_message_text("Материал не найден.", reply_markup=back_to_main_keyboard())
+            await query.edit_message_text(
+                "Материал не найден.",
+                reply_markup=back_to_main_keyboard(),
+            )
             return
 
         try:
@@ -743,10 +828,20 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if data.startswith("ADD_PICKCAT_"):
+        if not is_admin:
+            await query.answer(
+                "Только администратор может добавлять материалы",
+                show_alert=True,
+            )
+            return
+
         category_id = int(data.replace("ADD_PICKCAT_", "").strip())
         category = db.get_category(category_id)
         if category is None:
-            await query.edit_message_text("Категория не найдена.", reply_markup=categories_keyboard())
+            await query.edit_message_text(
+                "Категория не найдена.",
+                reply_markup=categories_keyboard(),
+            )
             return
 
         context.user_data["add_category_id"] = category_id
@@ -762,7 +857,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if data == "NOOP":
-        # Просто заглушка
         return
 
 
@@ -931,9 +1025,37 @@ async def finalize_add_material(update: Update, context: ContextTypes.DEFAULT_TY
         file_id=file_id or "",
     )
 
+    destination = db.get_destination_for_category(category_id)
+
+    if destination:
+        chat_id, thread_id = destination
+
+        try:
+            material = db.get_material(material_id)
+
+            if material is not None:
+                await context.application.bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=thread_id,
+                    text=format_material_text(material),
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+
+                if material.file_id.strip():
+                    await context.application.bot.send_document(
+                        chat_id=chat_id,
+                        message_thread_id=thread_id,
+                        document=material.file_id.strip(),
+                        caption=material.title,
+                    )
+
+        except Exception as error:
+            logger.error("Ошибка автоотправки: %s", error)
+
     await update.effective_message.reply_text(
         f"Сохранено ✅ (ID: {material_id})",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=main_menu_keyboard(is_admin=True),
     )
 
 
@@ -984,22 +1106,28 @@ def build_application() -> Application:
     # Кнопки меню
     application.add_handler(CallbackQueryHandler(menu_callback))
 
-    # В личке: приём файлов (документов) для добавления
+    # В личке: сначала обрабатываем обычный текст (без команд)
     application.add_handler(
         MessageHandler(
-            filters.ChatType.PRIVATE & (filters.Document.ALL | filters.TEXT),
+            filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+            text_router,
+        )
+    )
+
+    # В личке: отдельно обрабатываем документы
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & filters.Document.ALL,
             file_router,
         )
     )
 
-    # В личке: приём текста (поиск, шаги мастера)
+    # В группах: игнорировать все обычные сообщения
     application.add_handler(
-        MessageHandler(filters.ChatType.PRIVATE & filters.TEXT, text_router)
-    )
-
-    # В группах: не отвечать
-    application.add_handler(
-        MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, ignore_non_command_messages_in_groups)
+        MessageHandler(
+            filters.ChatType.GROUPS & ~filters.COMMAND,
+            ignore_non_command_messages_in_groups,
+        )
     )
 
     return application
@@ -1008,7 +1136,7 @@ def build_application() -> Application:
 def main() -> None:
     application = build_application()
     logger.info("Бот запущен.")
-    application.run_polling(close_loop=False)
+    application.run_polling()
 
 
 import time
