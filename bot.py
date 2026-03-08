@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -1010,5 +1011,13 @@ def main() -> None:
     application.run_polling(close_loop=False)
 
 
+import time
+
 if __name__ == "__main__":
-    main()
+    while True:
+        try:
+            main()
+        except Exception as error:
+            print("Бот упал с ошибкой:", error)
+            print("Перезапуск через 5 секунд...")
+            time.sleep(5)
