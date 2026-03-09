@@ -34,6 +34,13 @@ load_dotenv()
 
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 ADMIN_USER_ID_RAW: str = os.getenv("ADMIN_USER_ID", "").strip()
+PORT: int = int(os.getenv("PORT", "10000"))
+RENDER_EXTERNAL_URL: str = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+WEBHOOK_PATH: str = os.getenv("WEBHOOK_PATH", "telegram")
+WEBHOOK_SECRET: str = os.getenv("WEBHOOK_SECRET", "").strip()
+
+if not RENDER_EXTERNAL_URL:
+    raise RuntimeError("Не найден RENDER_EXTERNAL_URL в .env / Environment Variables")
 
 if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("Не найден TELEGRAM_BOT_TOKEN в .env")
@@ -210,6 +217,17 @@ class Database:
             )
 
             cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS deadlines (
+                    deadline_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    text TEXT NOT NULL,
+                    deadline_date TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+
+            cursor.execute(
                 "INSERT OR IGNORE INTO admins(user_id) VALUES (?)",
                 (ADMIN_USER_ID,),
             )
@@ -360,6 +378,48 @@ class Database:
         finally:
             connection.close()
 
+    def add_deadline(self, text: str, deadline_date: str):
+
+        connection = self._get_connection()
+
+        try:
+            cursor = connection.cursor()
+
+            cursor.execute(
+                """
+                INSERT INTO deadlines(text, deadline_date, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (text, deadline_date, datetime.utcnow().isoformat()),
+            )
+
+            connection.commit()
+
+        finally:
+            connection.close()
+
+    def list_deadlines(self):
+
+        connection = self._get_connection()
+
+        try:
+            cursor = connection.cursor()
+
+            cursor.execute(
+                """
+                SELECT deadline_id, text, deadline_date
+                FROM deadlines
+                ORDER BY deadline_date ASC
+                """
+            )
+
+            rows = cursor.fetchall()
+
+            return rows
+
+        finally:
+            connection.close()
+            
     def list_materials_by_category(self, category_id: int) -> List[Material]:
         connection = self._get_connection()
         try:
@@ -468,19 +528,32 @@ def is_private_chat(update: Update) -> bool:
 
 
 def format_material_text(material: Material) -> str:
+
     safe_title = escape_html(material.title)
     safe_desc = escape_html(material.description)
     safe_tags = escape_html(material.tags)
     safe_link = escape_html(material.link)
 
+    category = db.get_category(material.category_id)
+
+    if category:
+        icon = category.icon
+        name = category.name
+    else:
+        icon = "📂"
+        name = "Материалы"
+
     lines = [
+        f"{icon} <b>{name}</b>",
+        "",
         f"<b>{safe_title}</b>",
         "",
         f"{safe_desc}",
         "",
-        f"<b>Ссылка:</b> {safe_link}",
-        f"<b>Теги:</b> {safe_tags}",
+        f"🔗 {safe_link}",
+        f"🏷 {safe_tags}",
     ]
+
     return "\n".join(lines)
 
 
@@ -590,12 +663,17 @@ def materials_keyboard(category_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 
-def material_view_keyboard(material_id: int) -> InlineKeyboardMarkup:
-    keyboard = [
-        [InlineKeyboardButton(text="📣 Отправить в группу", callback_data=f"SEND_{material_id}")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="BACK_FROM_MATERIAL")],
-        [InlineKeyboardButton(text="🏠 В меню", callback_data="MENU_MAIN")],
-    ]
+def material_view_keyboard(material_id: int, is_admin: bool = False) -> InlineKeyboardMarkup:
+    keyboard: List[List[InlineKeyboardButton]] = []
+
+    if is_admin:
+        keyboard.append(
+            [InlineKeyboardButton(text="📣 Отправить в группу", callback_data=f"SEND_{material_id}")]
+        )
+
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="BACK_FROM_MATERIAL")])
+    keyboard.append([InlineKeyboardButton(text="🏠 В меню", callback_data="MENU_MAIN")])
+
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -739,6 +817,144 @@ async def bind_category_command(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 
+async def deadline_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+    if update.effective_message is None:
+        return
+
+    if not require_admin(update):
+        return
+
+    if not context.args:
+        await update.effective_message.reply_text(
+            "Использование:\n/deadline 15.03 Лабораторная №3"
+        )
+        return
+
+    deadline_date = context.args[0]
+    text = " ".join(context.args[1:]).strip()
+
+    if not text:
+        await update.effective_message.reply_text(
+            "Напиши описание дедлайна."
+        )
+        return
+
+    db.add_deadline(text, deadline_date)
+
+    deadline_message = (
+        f"📅 <b>Дедлайн</b>\n\n"
+        f"{escape_html(text)}\n"
+        f"Сдать до: <b>{escape_html(deadline_date)}</b>"
+    )
+
+    # пытаемся отправить в тему категории "Дедлайны"
+    category = db.get_category_by_name("Дедлайны")
+
+    if category is not None:
+        destination = db.get_destination_for_category(category.category_id)
+
+        if destination:
+            chat_id, thread_id = destination
+
+            try:
+                await context.application.bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=thread_id,
+                    text=deadline_message,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+            except Exception as error:
+                logger.error("Ошибка отправки дедлайна в тему: %s", error)
+
+    await update.effective_message.reply_text(
+        deadline_message,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+async def check_deadlines(application: Application):
+
+    deadlines = db.list_deadlines()
+
+    if not deadlines:
+        return
+
+    now = datetime.utcnow()
+
+    for row in deadlines:
+
+        text = row["text"]
+        date_str = row["deadline_date"]
+
+        try:
+            deadline_date = datetime.strptime(date_str, "%d.%m")
+            deadline_date = deadline_date.replace(year=now.year)
+        except:
+            continue
+
+        delta = deadline_date - now
+
+        if 0 < delta.total_seconds() < 86400:
+
+            category = db.get_category_by_name("Дедлайны")
+
+            if category is None:
+                continue
+
+            destination = db.get_destination_for_category(category.category_id)
+
+            if not destination:
+                continue
+
+            chat_id, thread_id = destination
+
+            message = (
+                f"⚠️ <b>Напоминание о дедлайне</b>\n\n"
+                f"{escape_html(text)}\n"
+                f"Сдать до: <b>{escape_html(date_str)}</b>"
+            )
+
+            try:
+                await application.bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=thread_id,
+                    text=message,
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception as error:
+                logger.error("Ошибка напоминания о дедлайне: %s", error)
+
+async def deadlines_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+    if update.effective_message is None:
+        return
+
+    deadlines = db.list_deadlines()
+
+    if not deadlines:
+        await update.effective_message.reply_text(
+            "📅 Пока нет сохранённых дедлайнов."
+        )
+        return
+
+    lines = ["📅 <b>Ближайшие дедлайны</b>\n"]
+
+    for row in deadlines:
+        text = escape_html(row["text"])
+        date = escape_html(row["deadline_date"])
+
+        lines.append(f"• {text} — <b>{date}</b>")
+
+    message = "\n".join(lines)
+
+    await update.effective_message.reply_text(
+        message,
+        parse_mode=ParseMode.HTML,
+    )
+
+
 # ----------------------------
 # Меню через callback-кнопки
 # ----------------------------
@@ -840,7 +1056,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await query.edit_message_text(
             format_material_text(material),
             parse_mode=ParseMode.HTML,
-            reply_markup=material_view_keyboard(material.material_id),
+            reply_markup=material_view_keyboard(material.material_id, is_admin=is_admin),
             disable_web_page_preview=True,
         )
         return
@@ -924,13 +1140,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             logger.exception("Ошибка отправки в группу: %s", exc)
             await query.edit_message_text(
                 "Не смог отправить в группу. Проверь, что бот добавлен в группу и у него есть право писать.",
-                reply_markup=material_view_keyboard(material_id),
+                reply_markup=material_view_keyboard(material_id, is_admin=is_admin),
             )
             return
 
         await query.edit_message_text(
             "Отправлено ✅",
-            reply_markup=material_view_keyboard(material_id),
+            reply_markup=material_view_keyboard(material_id, is_admin=is_admin),
         )
         return
 
@@ -971,6 +1187,26 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 # Добавление материала: текстовые шаги
 # ----------------------------
 
+async def handle_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+
+    results = db.search_materials(text, limit=10)
+
+    if not results:
+        await update.effective_message.reply_text(
+            "Ничего не найдено.\n\nПопробуй:\n"
+            "матан\n"
+            "#экзамен\n"
+            "интеграл"
+        )
+        return
+
+    for material in results:
+
+        await update.effective_message.reply_text(
+            format_material_text(material),
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message is None or update.effective_user is None:
         return
@@ -992,10 +1228,7 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     # Всё ниже — только для админа
     if not is_admin:
-        await update.effective_message.reply_text(
-            "Используй кнопки 📚 Библиотека или 🔎 Поиск.",
-            reply_markup=main_menu_keyboard(is_admin=False),
-        )
+        await handle_search_text(update, context, text)
         return
 
     # Последний шаг добавления: если файла нет и пользователь написал "-"
@@ -1174,8 +1407,27 @@ async def send_material_to_chat(application: Application, chat_id: int, material
 # ----------------------------
 
 async def ignore_non_command_messages_in_groups(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Просто ничего не делаем — хендлер нужен, чтобы не было случайной логики
-    return
+
+    if update.effective_message is None:
+        return
+
+    text = update.effective_message.text or ""
+
+    # реагируем только на сообщения с #
+    if "#" not in text:
+        return
+
+    results = db.search_materials(text, limit=5)
+
+    if not results:
+        return
+
+    for material in results:
+        await update.effective_message.reply_text(
+            format_material_text(material),
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
 
 # ----------------------------
@@ -1189,6 +1441,8 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("register", register_group_command))
     application.add_handler(CommandHandler("bind_category", bind_category_command))
+    application.add_handler(CommandHandler("deadline", deadline_command))
+    application.add_handler(CommandHandler("deadlines", deadlines_command)) 
 
     # Кнопки меню
     application.add_handler(CallbackQueryHandler(menu_callback))
@@ -1217,6 +1471,13 @@ def build_application() -> Application:
         )
     )
 
+    # Автоматическая проверка дедлайнов каждый час
+    application.job_queue.run_repeating(
+        lambda context: check_deadlines(context.application),
+        interval=3600,
+        first=60,
+    )
+
     return application
 
 
@@ -1236,3 +1497,1568 @@ if __name__ == "__main__":
             print("Бот упал с ошибкой:", error)
             print("Перезапуск через 5 секунд...")
             time.sleep(5)
+
+    is_admin = require_admin(update)
+    data = query.data or ""
+
+    if data == "MENU_MAIN":
+        await query.edit_message_text(
+            "Главное меню:",
+            reply_markup=main_menu_keyboard(is_admin=is_admin),
+        )
+        return
+
+    if data == "MENU_LIBRARY":
+        await query.edit_message_text(
+            "Выбери вкладку/категорию:",
+            reply_markup=categories_keyboard(),
+        )
+        return
+
+    if data == "MENU_SEARCH":
+        await query.edit_message_text(
+            "Напиши запрос (слова или #теги). Например:\n"
+            "матан\n"
+            "#экзамен\n"
+            "интеграл #матан",
+            reply_markup=back_to_main_keyboard(),
+        )
+        context.user_data["awaiting_search_text"] = True
+        return
+
+    if data == "MENU_ADD":
+        if not is_admin:
+            await query.answer(
+                "Только администратор может добавлять материалы",
+                show_alert=True,
+            )
+            return
+
+        categories = db.list_categories()
+        keyboard: List[List[InlineKeyboardButton]] = []
+        for category in categories:
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{category.icon} {category.name}",
+                        callback_data=f"ADD_PICKCAT_{category.category_id}",
+                    )
+                ]
+            )
+        keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="MENU_MAIN")])
+
+        await query.edit_message_text(
+            "Куда добавляем материал? Выбери категорию:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    if data.startswith("CATEGORY_"):
+        category_id = int(data.replace("CATEGORY_", "").strip())
+        category = db.get_category(category_id)
+        if category is None:
+            await query.edit_message_text(
+                "Категория не найдена.",
+                reply_markup=categories_keyboard(),
+            )
+            return
+
+        context.user_data["last_category_id"] = category_id
+        await query.edit_message_text(
+            f"{category.icon} {category.name}\nМатериалы:",
+            reply_markup=materials_keyboard(category_id),
+        )
+        return
+
+    if data.startswith("MATERIAL_"):
+        material_id = int(data.replace("MATERIAL_", "").strip())
+        material = db.get_material(material_id)
+        if material is None:
+            await query.edit_message_text(
+                "Материал не найден.",
+                reply_markup=back_to_main_keyboard(),
+            )
+            return
+
+        context.user_data["last_material_category_id"] = material.category_id
+
+        await query.edit_message_text(
+            format_material_text(material),
+            parse_mode=ParseMode.HTML,
+            reply_markup=material_view_keyboard(material.material_id, is_admin=is_admin),
+            disable_web_page_preview=True,
+        )
+        return
+
+    if data == "BACK_FROM_MATERIAL":
+        category_id = int(context.user_data.get("last_material_category_id", 0))
+        if category_id <= 0:
+            await query.edit_message_text(
+                "Выбери категорию:",
+                reply_markup=categories_keyboard(),
+            )
+            return
+
+        category = db.get_category(category_id)
+        name = category.name if category else "Категория"
+        icon = category.icon if category else "📚"
+
+        await query.edit_message_text(
+            f"{icon} {name}\nМатериалы:",
+            reply_markup=materials_keyboard(category_id),
+        )
+        return
+
+    if data.startswith("SEND_"):
+        if not is_admin:
+            await query.answer(
+                "Только администратор может отправлять материалы в группу",
+                show_alert=True,
+            )
+            return
+
+        material_id = int(data.replace("SEND_", "").strip())
+        material = db.get_material(material_id)
+        if material is None:
+            await query.edit_message_text(
+                "Материал не найден.",
+                reply_markup=back_to_main_keyboard(),
+            )
+            return
+
+        await query.edit_message_text(
+            "Куда отправляем? Выбери группу:",
+            reply_markup=groups_keyboard(material_id),
+        )
+        return
+
+    if data.startswith("SENDTO_"):
+        if not is_admin:
+            await query.answer(
+                "Только администратор может отправлять материалы в группу",
+                show_alert=True,
+            )
+            return
+
+        parts = data.split("_", 2)
+        if len(parts) != 3:
+            await query.edit_message_text(
+                "Некорректная кнопка.",
+                reply_markup=back_to_main_keyboard(),
+            )
+            return
+
+        material_id = int(parts[1])
+        chat_id = int(parts[2])
+
+        material = db.get_material(material_id)
+        if material is None:
+            await query.edit_message_text(
+                "Материал не найден.",
+                reply_markup=back_to_main_keyboard(),
+            )
+            return
+
+        try:
+            await send_material_to_chat(
+                application=context.application,
+                chat_id=chat_id,
+                material=material,
+            )
+        except Exception as exc:
+            logger.exception("Ошибка отправки в группу: %s", exc)
+            await query.edit_message_text(
+                "Не смог отправить в группу. Проверь, что бот добавлен в группу и у него есть право писать.",
+                reply_markup=material_view_keyboard(material_id, is_admin=is_admin),
+            )
+            return
+
+        await query.edit_message_text(
+            "Отправлено ✅",
+            reply_markup=material_view_keyboard(material_id, is_admin=is_admin),
+        )
+        return
+
+    if data.startswith("ADD_PICKCAT_"):
+        if not is_admin:
+            await query.answer(
+                "Только администратор может добавлять материалы",
+                show_alert=True,
+            )
+            return
+
+        category_id = int(data.replace("ADD_PICKCAT_", "").strip())
+        category = db.get_category(category_id)
+        if category is None:
+            await query.edit_message_text(
+                "Категория не найдена.",
+                reply_markup=categories_keyboard(),
+            )
+            return
+
+        context.user_data["add_category_id"] = category_id
+        context.user_data["add_file_id"] = ""
+        context.user_data["add_link"] = ""
+        context.user_data["add_tags"] = ""
+
+        await query.edit_message_text(
+            f"Категория: {category.icon} {category.name}\n\nТеперь пришли заголовок материала одним сообщением.",
+            reply_markup=back_to_main_keyboard(),
+        )
+        context.user_data["awaiting_add_title"] = True
+        return
+
+    if data == "NOOP":
+        return
+
+
+# ----------------------------
+# Добавление материала: текстовые шаги
+# ----------------------------
+
+async def handle_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+
+    results = db.search_materials(text, limit=10)
+
+    if not results:
+        await update.effective_message.reply_text(
+            "Ничего не найдено.\n\nПопробуй:\n"
+            "матан\n"
+            "#экзамен\n"
+            "интеграл"
+        )
+        return
+
+    for material in results:
+
+        await update.effective_message.reply_text(
+            format_material_text(material),
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_message is None or update.effective_user is None:
+        return
+
+    if not is_private_chat(update):
+        return
+
+    text = (update.effective_message.text or "").strip()
+    if not text:
+        return
+
+    is_admin = require_admin(update)
+
+    # Поиск доступен всем
+    if context.user_data.get("awaiting_search_text") is True:
+        context.user_data["awaiting_search_text"] = False
+        await handle_search_text(update, context, text)
+        return
+
+    # Всё ниже — только для админа
+    if not is_admin:
+        await handle_search_text(update, context, text)
+        return
+
+    # Последний шаг добавления: если файла нет и пользователь написал "-"
+    if context.user_data.get("awaiting_add_file") is True and text == "-":
+        context.user_data["awaiting_add_file"] = False
+        await finalize_add_material(update, context, file_id="")
+        return
+
+    # Добавление: заголовок
+    if context.user_data.get("awaiting_add_title") is True:
+        context.user_data["awaiting_add_title"] = False
+        context.user_data["add_title"] = text
+        await update.effective_message.reply_text(
+            "Отлично. Теперь пришли описание (можно коротко, 1–5 строк)."
+        )
+        context.user_data["awaiting_add_description"] = True
+        return
+
+    # Добавление: описание
+    if context.user_data.get("awaiting_add_description") is True:
+        context.user_data["awaiting_add_description"] = False
+        context.user_data["add_description"] = text
+        await update.effective_message.reply_text(
+            "Теперь пришли ссылку (если ссылки нет — напиши: - )"
+        )
+        context.user_data["awaiting_add_link"] = True
+        return
+
+    # Добавление: ссылка
+    if context.user_data.get("awaiting_add_link") is True:
+        context.user_data["awaiting_add_link"] = False
+        link = text
+        if link == "-":
+            link = ""
+        context.user_data["add_link"] = link
+        await update.effective_message.reply_text(
+            "Теперь теги (через пробел или запятую). Например: матан, экзамен, интеграл"
+        )
+        context.user_data["awaiting_add_tags"] = True
+        return
+
+    # Добавление: теги
+    if context.user_data.get("awaiting_add_tags") is True:
+        context.user_data["awaiting_add_tags"] = False
+        tags = normalize_tags(text)
+        context.user_data["add_tags"] = tags
+        await update.effective_message.reply_text(
+            "Последний шаг: пришли файл (документом) или напиши: - (если без файла)"
+        )
+        context.user_data["awaiting_add_file"] = True
+        return
+
+    await update.effective_message.reply_text(
+        "Я понимаю команды через кнопки. Открой меню:",
+        reply_markup=main_menu_keyboard(is_admin=True),
+    )
+
+
+# ----------------------------
+# Добавление материала: приём файла
+# ----------------------------
+
+async def file_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_message is None or update.effective_user is None:
+        return
+
+    if not is_private_chat(update):
+        return
+
+    if not require_admin(update):
+        return
+
+    if context.user_data.get("awaiting_add_file") is not True:
+        return
+
+    message: Message = update.effective_message
+
+    # Если отправили документ
+    if message.document is not None:
+        file_id = message.document.file_id
+        context.user_data["awaiting_add_file"] = False
+        await finalize_add_material(update, context, file_id=file_id)
+        return
+
+    # Если прислали не документ
+    await update.effective_message.reply_text(
+        "Нужен файл как документ, или напиши '-' чтобы добавить без файла."
+    )
+
+
+async def finalize_add_material(update: Update, context: ContextTypes.DEFAULT_TYPE, file_id: str) -> None:
+    category_id = int(context.user_data.get("add_category_id", 0))
+    title = str(context.user_data.get("add_title", "")).strip()
+    description = str(context.user_data.get("add_description", "")).strip()
+    link = str(context.user_data.get("add_link", "")).strip()
+    tags = str(context.user_data.get("add_tags", "")).strip()
+
+    if not link:
+        link = "—"
+
+    if category_id <= 0 or not title or not description or not tags:
+        await update.effective_message.reply_text(
+            "Не хватает данных для сохранения. Давай начнём заново: /start"
+        )
+        return
+
+    material_id = db.add_material(
+        category_id=category_id,
+        title=title,
+        description=description,
+        link=link,
+        tags=tags,
+        file_id=file_id or "",
+    )
+
+    destination = db.get_destination_for_category(category_id)
+
+    if destination:
+        chat_id, thread_id = destination
+
+        try:
+            material = db.get_material(material_id)
+
+            if material is not None:
+                await context.application.bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=thread_id,
+                    text=format_material_text(material),
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+
+                if material.file_id.strip():
+                    await context.application.bot.send_document(
+                        chat_id=chat_id,
+                        message_thread_id=thread_id,
+                        document=material.file_id.strip(),
+                        caption=material.title,
+                    )
+
+        except Exception as error:
+            logger.error("Ошибка автоотправки: %s", error)
+
+    await update.effective_message.reply_text(
+        f"Сохранено ✅ (ID: {material_id})",
+        reply_markup=main_menu_keyboard(is_admin=True),
+    )
+
+
+# ----------------------------
+# Отправка материала в чат/группу
+# ----------------------------
+
+async def send_material_to_chat(application: Application, chat_id: int, material: Material) -> None:
+    text = format_material_text(material)
+
+    # Сначала отправляем текст
+    await application.bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+    # Потом файл, если он есть
+    if material.file_id.strip():
+        await application.bot.send_document(
+            chat_id=chat_id,
+            document=material.file_id.strip(),
+            caption=f"{material.title}",
+        )
+
+
+# ----------------------------
+# Игнор в группах (чтобы “не отвечал”)
+# ----------------------------
+
+async def ignore_non_command_messages_in_groups(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+    if update.effective_message is None:
+        return
+
+    text = update.effective_message.text or ""
+
+    # реагируем только на сообщения с #
+    if "#" not in text:
+        return
+
+    results = db.search_materials(text, limit=5)
+
+    if not results:
+        return
+
+    for material in results:
+        await update.effective_message.reply_text(
+            format_material_text(material),
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+
+# ----------------------------
+# Запуск
+# ----------------------------
+
+def build_application() -> Application:
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Команды
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("register", register_group_command))
+    application.add_handler(CommandHandler("bind_category", bind_category_command))
+    application.add_handler(CommandHandler("deadline", deadline_command))
+    application.add_handler(CommandHandler("deadlines", deadlines_command)) 
+
+    # Кнопки меню
+    application.add_handler(CallbackQueryHandler(menu_callback))
+
+    # В личке: сначала обрабатываем обычный текст (без команд)
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+            text_router,
+        )
+    )
+
+    # В личке: отдельно обрабатываем документы
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & filters.Document.ALL,
+            file_router,
+        )
+    )
+
+    # В группах: игнорировать все обычные сообщения
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & ~filters.COMMAND,
+            ignore_non_command_messages_in_groups,
+        )
+    )
+
+    # Автоматическая проверка дедлайнов каждый час
+    application.job_queue.run_repeating(
+        lambda context: check_deadlines(context.application),
+        interval=3600,
+        first=60,
+    )
+
+    return application
+
+
+def main() -> None:
+    application = build_application()
+    logger.info("Бот запущен.")
+    application.run_polling()
+
+
+import time
+
+if __name__ == "__main__":
+    while True:
+        try:
+            main()
+        except Exception as error:
+            print("Бот упал с ошибкой:", error)
+            print("Перезапуск через 5 секунд...")
+            time.sleep(5)
+
+
+    if data == "MENU_ADD":
+        if not is_admin:
+            await query.answer(
+                "Только администратор может добавлять материалы",
+                show_alert=True,
+            )
+            return
+
+        categories = db.list_categories()
+        keyboard: List[List[InlineKeyboardButton]] = []
+        for category in categories:
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{category.icon} {category.name}",
+                        callback_data=f"ADD_PICKCAT_{category.category_id}",
+                    )
+                ]
+            )
+        keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="MENU_MAIN")])
+
+        await query.edit_message_text(
+            "Куда добавляем материал? Выбери категорию:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    if data.startswith("CATEGORY_"):
+        category_id = int(data.replace("CATEGORY_", "").strip())
+        category = db.get_category(category_id)
+        if category is None:
+            await query.edit_message_text(
+                "Категория не найдена.",
+                reply_markup=categories_keyboard(),
+            )
+            return
+
+        context.user_data["last_category_id"] = category_id
+        await query.edit_message_text(
+            f"{category.icon} {category.name}\nМатериалы:",
+            reply_markup=materials_keyboard(category_id),
+        )
+        return
+
+    if data.startswith("MATERIAL_"):
+        material_id = int(data.replace("MATERIAL_", "").strip())
+        material = db.get_material(material_id)
+        if material is None:
+            await query.edit_message_text(
+                "Материал не найден.",
+                reply_markup=back_to_main_keyboard(),
+            )
+            return
+
+        context.user_data["last_material_category_id"] = material.category_id
+
+        await query.edit_message_text(
+            format_material_text(material),
+            parse_mode=ParseMode.HTML,
+            reply_markup=material_view_keyboard(material.material_id, is_admin=is_admin),
+            disable_web_page_preview=True,
+        )
+        return
+
+    if data == "BACK_FROM_MATERIAL":
+        category_id = int(context.user_data.get("last_material_category_id", 0))
+        if category_id <= 0:
+            await query.edit_message_text(
+                "Выбери категорию:",
+                reply_markup=categories_keyboard(),
+            )
+            return
+
+        category = db.get_category(category_id)
+        name = category.name if category else "Категория"
+        icon = category.icon if category else "📚"
+
+        await query.edit_message_text(
+            f"{icon} {name}\nМатериалы:",
+            reply_markup=materials_keyboard(category_id),
+        )
+        return
+
+    if data.startswith("SEND_"):
+        if not is_admin:
+            await query.answer(
+                "Только администратор может отправлять материалы в группу",
+                show_alert=True,
+            )
+            return
+
+        material_id = int(data.replace("SEND_", "").strip())
+        material = db.get_material(material_id)
+        if material is None:
+            await query.edit_message_text(
+                "Материал не найден.",
+                reply_markup=back_to_main_keyboard(),
+            )
+            return
+
+        await query.edit_message_text(
+            "Куда отправляем? Выбери группу:",
+            reply_markup=groups_keyboard(material_id),
+        )
+        return
+
+    if data.startswith("SENDTO_"):
+        if not is_admin:
+            await query.answer(
+                "Только администратор может отправлять материалы в группу",
+                show_alert=True,
+            )
+            return
+
+        parts = data.split("_", 2)
+        if len(parts) != 3:
+            await query.edit_message_text(
+                "Некорректная кнопка.",
+                reply_markup=back_to_main_keyboard(),
+            )
+            return
+
+        material_id = int(parts[1])
+        chat_id = int(parts[2])
+
+        material = db.get_material(material_id)
+        if material is None:
+            await query.edit_message_text(
+                "Материал не найден.",
+                reply_markup=back_to_main_keyboard(),
+            )
+            return
+
+        try:
+            await send_material_to_chat(
+                application=context.application,
+                chat_id=chat_id,
+                material=material,
+            )
+        except Exception as exc:
+            logger.exception("Ошибка отправки в группу: %s", exc)
+            await query.edit_message_text(
+                "Не смог отправить в группу. Проверь, что бот добавлен в группу и у него есть право писать.",
+                reply_markup=material_view_keyboard(material_id, is_admin=is_admin),
+            )
+            return
+
+        await query.edit_message_text(
+            "Отправлено ✅",
+            reply_markup=material_view_keyboard(material_id, is_admin=is_admin),
+        )
+        return
+
+    if data.startswith("ADD_PICKCAT_"):
+        if not is_admin:
+            await query.answer(
+                "Только администратор может добавлять материалы",
+                show_alert=True,
+            )
+            return
+
+        category_id = int(data.replace("ADD_PICKCAT_", "").strip())
+        category = db.get_category(category_id)
+        if category is None:
+            await query.edit_message_text(
+                "Категория не найдена.",
+                reply_markup=categories_keyboard(),
+            )
+            return
+
+        context.user_data["add_category_id"] = category_id
+        context.user_data["add_file_id"] = ""
+        context.user_data["add_link"] = ""
+        context.user_data["add_tags"] = ""
+
+        await query.edit_message_text(
+            f"Категория: {category.icon} {category.name}\n\nТеперь пришли заголовок материала одним сообщением.",
+            reply_markup=back_to_main_keyboard(),
+        )
+        context.user_data["awaiting_add_title"] = True
+        return
+
+    if data == "NOOP":
+        return
+
+
+# ----------------------------
+# Добавление материала: текстовые шаги
+# ----------------------------
+
+async def handle_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+
+    results = db.search_materials(text, limit=10)
+
+    if not results:
+        await update.effective_message.reply_text(
+            "Ничего не найдено.\n\nПопробуй:\n"
+            "матан\n"
+            "#экзамен\n"
+            "интеграл"
+        )
+        return
+
+    for material in results:
+
+        await update.effective_message.reply_text(
+            format_material_text(material),
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_message is None or update.effective_user is None:
+        return
+
+    if not is_private_chat(update):
+        return
+
+    text = (update.effective_message.text or "").strip()
+    if not text:
+        return
+
+    is_admin = require_admin(update)
+
+    # Поиск доступен всем
+    if context.user_data.get("awaiting_search_text") is True:
+        context.user_data["awaiting_search_text"] = False
+        await handle_search_text(update, context, text)
+        return
+
+    # Всё ниже — только для админа
+    if not is_admin:
+        await handle_search_text(update, context, text)
+        return
+
+    # Последний шаг добавления: если файла нет и пользователь написал "-"
+    if context.user_data.get("awaiting_add_file") is True and text == "-":
+        context.user_data["awaiting_add_file"] = False
+        await finalize_add_material(update, context, file_id="")
+        return
+
+    # Добавление: заголовок
+    if context.user_data.get("awaiting_add_title") is True:
+        context.user_data["awaiting_add_title"] = False
+        context.user_data["add_title"] = text
+        await update.effective_message.reply_text(
+            "Отлично. Теперь пришли описание (можно коротко, 1–5 строк)."
+        )
+        context.user_data["awaiting_add_description"] = True
+        return
+
+    # Добавление: описание
+    if context.user_data.get("awaiting_add_description") is True:
+        context.user_data["awaiting_add_description"] = False
+        context.user_data["add_description"] = text
+        await update.effective_message.reply_text(
+            "Теперь пришли ссылку (если ссылки нет — напиши: - )"
+        )
+        context.user_data["awaiting_add_link"] = True
+        return
+
+    # Добавление: ссылка
+    if context.user_data.get("awaiting_add_link") is True:
+        context.user_data["awaiting_add_link"] = False
+        link = text
+        if link == "-":
+            link = ""
+        context.user_data["add_link"] = link
+        await update.effective_message.reply_text(
+            "Теперь теги (через пробел или запятую). Например: матан, экзамен, интеграл"
+        )
+        context.user_data["awaiting_add_tags"] = True
+        return
+
+    # Добавление: теги
+    if context.user_data.get("awaiting_add_tags") is True:
+        context.user_data["awaiting_add_tags"] = False
+        tags = normalize_tags(text)
+        context.user_data["add_tags"] = tags
+        await update.effective_message.reply_text(
+            "Последний шаг: пришли файл (документом) или напиши: - (если без файла)"
+        )
+        context.user_data["awaiting_add_file"] = True
+        return
+
+    await update.effective_message.reply_text(
+        "Я понимаю команды через кнопки. Открой меню:",
+        reply_markup=main_menu_keyboard(is_admin=True),
+    )
+
+
+# ----------------------------
+# Добавление материала: приём файла
+# ----------------------------
+
+async def file_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_message is None or update.effective_user is None:
+        return
+
+    if not is_private_chat(update):
+        return
+
+    if not require_admin(update):
+        return
+
+    if context.user_data.get("awaiting_add_file") is not True:
+        return
+
+    message: Message = update.effective_message
+
+    # Если отправили документ
+    if message.document is not None:
+        file_id = message.document.file_id
+        context.user_data["awaiting_add_file"] = False
+        await finalize_add_material(update, context, file_id=file_id)
+        return
+
+    # Если прислали не документ
+    await update.effective_message.reply_text(
+        "Нужен файл как документ, или напиши '-' чтобы добавить без файла."
+    )
+
+
+async def finalize_add_material(update: Update, context: ContextTypes.DEFAULT_TYPE, file_id: str) -> None:
+    category_id = int(context.user_data.get("add_category_id", 0))
+    title = str(context.user_data.get("add_title", "")).strip()
+    description = str(context.user_data.get("add_description", "")).strip()
+    link = str(context.user_data.get("add_link", "")).strip()
+    tags = str(context.user_data.get("add_tags", "")).strip()
+
+    if not link:
+        link = "—"
+
+    if category_id <= 0 or not title or not description or not tags:
+        await update.effective_message.reply_text(
+            "Не хватает данных для сохранения. Давай начнём заново: /start"
+        )
+        return
+
+    material_id = db.add_material(
+        category_id=category_id,
+        title=title,
+        description=description,
+        link=link,
+        tags=tags,
+        file_id=file_id or "",
+    )
+
+    destination = db.get_destination_for_category(category_id)
+
+    if destination:
+        chat_id, thread_id = destination
+
+        try:
+            material = db.get_material(material_id)
+
+            if material is not None:
+                await context.application.bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=thread_id,
+                    text=format_material_text(material),
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+
+                if material.file_id.strip():
+                    await context.application.bot.send_document(
+                        chat_id=chat_id,
+                        message_thread_id=thread_id,
+                        document=material.file_id.strip(),
+                        caption=material.title,
+                    )
+
+        except Exception as error:
+            logger.error("Ошибка автоотправки: %s", error)
+
+    await update.effective_message.reply_text(
+        f"Сохранено ✅ (ID: {material_id})",
+        reply_markup=main_menu_keyboard(is_admin=True),
+    )
+
+
+# ----------------------------
+# Отправка материала в чат/группу
+# ----------------------------
+
+async def send_material_to_chat(application: Application, chat_id: int, material: Material) -> None:
+    text = format_material_text(material)
+
+    # Сначала отправляем текст
+    await application.bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+    # Потом файл, если он есть
+    if material.file_id.strip():
+        await application.bot.send_document(
+            chat_id=chat_id,
+            document=material.file_id.strip(),
+            caption=f"{material.title}",
+        )
+
+
+# ----------------------------
+# Игнор в группах (чтобы “не отвечал”)
+# ----------------------------
+
+async def ignore_non_command_messages_in_groups(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+    if update.effective_message is None:
+        return
+
+    text = update.effective_message.text or ""
+
+    # реагируем только на сообщения с #
+    if "#" not in text:
+        return
+
+    results = db.search_materials(text, limit=5)
+
+    if not results:
+        return
+
+    for material in results:
+        await update.effective_message.reply_text(
+            format_material_text(material),
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+
+# ----------------------------
+# Запуск
+# ----------------------------
+
+def build_application() -> Application:
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Команды
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("register", register_group_command))
+    application.add_handler(CommandHandler("bind_category", bind_category_command))
+    application.add_handler(CommandHandler("deadline", deadline_command))
+    application.add_handler(CommandHandler("deadlines", deadlines_command)) 
+
+    # Кнопки меню
+    application.add_handler(CallbackQueryHandler(menu_callback))
+
+    # В личке: сначала обрабатываем обычный текст (без команд)
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+            text_router,
+        )
+    )
+
+    # В личке: отдельно обрабатываем документы
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & filters.Document.ALL,
+            file_router,
+        )
+    )
+
+    # В группах: игнорировать все обычные сообщения
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & ~filters.COMMAND,
+            ignore_non_command_messages_in_groups,
+        )
+    )
+
+    # Автоматическая проверка дедлайнов каждый час
+    application.job_queue.run_repeating(
+        lambda context: check_deadlines(context.application),
+        interval=3600,
+        first=60,
+    )
+
+    return application
+
+
+def main() -> None:
+    application = build_application()
+    logger.info("Бот запущен.")
+    application.run_polling()
+
+
+import time
+
+if __name__ == "__main__":
+    while True:
+        try:
+            main()
+        except Exception as error:
+            print("Бот упал с ошибкой:", error)
+            print("Перезапуск через 5 секунд...")
+            time.sleep(5)
+
+    is_admin = require_admin(update)
+    data = query.data or ""
+
+    if data == "MENU_MAIN":
+        await query.edit_message_text(
+            "Главное меню:",
+            reply_markup=main_menu_keyboard(is_admin=is_admin),
+        )
+        return
+
+    if data == "MENU_LIBRARY":
+        await query.edit_message_text(
+            "Выбери вкладку/категорию:",
+            reply_markup=categories_keyboard(),
+        )
+        return
+
+    if data == "MENU_SEARCH":
+        await query.edit_message_text(
+            "Напиши запрос (слова или #теги). Например:\n"
+            "матан\n"
+            "#экзамен\n"
+            "интеграл #матан",
+            reply_markup=back_to_main_keyboard(),
+        )
+        context.user_data["awaiting_search_text"] = True
+        return
+
+    if data == "MENU_ADD":
+        if not is_admin:
+            await query.answer(
+                "Только администратор может добавлять материалы",
+                show_alert=True,
+            )
+            return
+
+        categories = db.list_categories()
+        keyboard: List[List[InlineKeyboardButton]] = []
+        for category in categories:
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{category.icon} {category.name}",
+                        callback_data=f"ADD_PICKCAT_{category.category_id}",
+                    )
+                ]
+            )
+        keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="MENU_MAIN")])
+
+        await query.edit_message_text(
+            "Куда добавляем материал? Выбери категорию:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    if data.startswith("CATEGORY_"):
+        category_id = int(data.replace("CATEGORY_", "").strip())
+        category = db.get_category(category_id)
+        if category is None:
+            await query.edit_message_text(
+                "Категория не найдена.",
+                reply_markup=categories_keyboard(),
+            )
+            return
+
+        context.user_data["last_category_id"] = category_id
+        await query.edit_message_text(
+            f"{category.icon} {category.name}\nМатериалы:",
+            reply_markup=materials_keyboard(category_id),
+        )
+        return
+
+    if data.startswith("MATERIAL_"):
+        material_id = int(data.replace("MATERIAL_", "").strip())
+        material = db.get_material(material_id)
+        if material is None:
+            await query.edit_message_text(
+                "Материал не найден.",
+                reply_markup=back_to_main_keyboard(),
+            )
+            return
+
+        context.user_data["last_material_category_id"] = material.category_id
+
+        await query.edit_message_text(
+            format_material_text(material),
+            parse_mode=ParseMode.HTML,
+            reply_markup=material_view_keyboard(material.material_id, is_admin=is_admin),
+            disable_web_page_preview=True,
+        )
+        return
+
+    if data == "BACK_FROM_MATERIAL":
+        category_id = int(context.user_data.get("last_material_category_id", 0))
+        if category_id <= 0:
+            await query.edit_message_text(
+                "Выбери категорию:",
+                reply_markup=categories_keyboard(),
+            )
+            return
+
+        category = db.get_category(category_id)
+        name = category.name if category else "Категория"
+        icon = category.icon if category else "📚"
+
+        await query.edit_message_text(
+            f"{icon} {name}\nМатериалы:",
+            reply_markup=materials_keyboard(category_id),
+        )
+        return
+
+    if data.startswith("SEND_"):
+        if not is_admin:
+            await query.answer(
+                "Только администратор может отправлять материалы в группу",
+                show_alert=True,
+            )
+            return
+
+        material_id = int(data.replace("SEND_", "").strip())
+        material = db.get_material(material_id)
+        if material is None:
+            await query.edit_message_text(
+                "Материал не найден.",
+                reply_markup=back_to_main_keyboard(),
+            )
+            return
+
+        await query.edit_message_text(
+            "Куда отправляем? Выбери группу:",
+            reply_markup=groups_keyboard(material_id),
+        )
+        return
+
+    if data.startswith("SENDTO_"):
+        if not is_admin:
+            await query.answer(
+                "Только администратор может отправлять материалы в группу",
+                show_alert=True,
+            )
+            return
+
+        parts = data.split("_", 2)
+        if len(parts) != 3:
+            await query.edit_message_text(
+                "Некорректная кнопка.",
+                reply_markup=back_to_main_keyboard(),
+            )
+            return
+
+        material_id = int(parts[1])
+        chat_id = int(parts[2])
+
+        material = db.get_material(material_id)
+        if material is None:
+            await query.edit_message_text(
+                "Материал не найден.",
+                reply_markup=back_to_main_keyboard(),
+            )
+            return
+
+        try:
+            await send_material_to_chat(
+                application=context.application,
+                chat_id=chat_id,
+                material=material,
+            )
+        except Exception as exc:
+            logger.exception("Ошибка отправки в группу: %s", exc)
+            await query.edit_message_text(
+                "Не смог отправить в группу. Проверь, что бот добавлен в группу и у него есть право писать.",
+                reply_markup=material_view_keyboard(material_id, is_admin=is_admin),
+            )
+            return
+
+        await query.edit_message_text(
+            "Отправлено ✅",
+            reply_markup=material_view_keyboard(material_id, is_admin=is_admin),
+        )
+        return
+
+    if data.startswith("ADD_PICKCAT_"):
+        if not is_admin:
+            await query.answer(
+                "Только администратор может добавлять материалы",
+                show_alert=True,
+            )
+            return
+
+        category_id = int(data.replace("ADD_PICKCAT_", "").strip())
+        category = db.get_category(category_id)
+        if category is None:
+            await query.edit_message_text(
+                "Категория не найдена.",
+                reply_markup=categories_keyboard(),
+            )
+            return
+
+        context.user_data["add_category_id"] = category_id
+        context.user_data["add_file_id"] = ""
+        context.user_data["add_link"] = ""
+        context.user_data["add_tags"] = ""
+
+        await query.edit_message_text(
+            f"Категория: {category.icon} {category.name}\n\nТеперь пришли заголовок материала одним сообщением.",
+            reply_markup=back_to_main_keyboard(),
+        )
+        context.user_data["awaiting_add_title"] = True
+        return
+
+    if data == "NOOP":
+        return
+
+
+# ----------------------------
+# Добавление материала: текстовые шаги
+# ----------------------------
+
+async def handle_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+
+    results = db.search_materials(text, limit=10)
+
+    if not results:
+        await update.effective_message.reply_text(
+            "Ничего не найдено.\n\nПопробуй:\n"
+            "матан\n"
+            "#экзамен\n"
+            "интеграл"
+        )
+        return
+
+    for material in results:
+
+        await update.effective_message.reply_text(
+            format_material_text(material),
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_message is None or update.effective_user is None:
+        return
+
+    if not is_private_chat(update):
+        return
+
+    text = (update.effective_message.text or "").strip()
+    if not text:
+        return
+
+    is_admin = require_admin(update)
+
+    # Поиск доступен всем
+    if context.user_data.get("awaiting_search_text") is True:
+        context.user_data["awaiting_search_text"] = False
+        await handle_search_text(update, context, text)
+        return
+
+    # Всё ниже — только для админа
+    if not is_admin:
+        await handle_search_text(update, context, text)
+        return
+
+    # Последний шаг добавления: если файла нет и пользователь написал "-"
+    if context.user_data.get("awaiting_add_file") is True and text == "-":
+        context.user_data["awaiting_add_file"] = False
+        await finalize_add_material(update, context, file_id="")
+        return
+
+    # Добавление: заголовок
+    if context.user_data.get("awaiting_add_title") is True:
+        context.user_data["awaiting_add_title"] = False
+        context.user_data["add_title"] = text
+        await update.effective_message.reply_text(
+            "Отлично. Теперь пришли описание (можно коротко, 1–5 строк)."
+        )
+        context.user_data["awaiting_add_description"] = True
+        return
+
+    # Добавление: описание
+    if context.user_data.get("awaiting_add_description") is True:
+        context.user_data["awaiting_add_description"] = False
+        context.user_data["add_description"] = text
+        await update.effective_message.reply_text(
+            "Теперь пришли ссылку (если ссылки нет — напиши: - )"
+        )
+        context.user_data["awaiting_add_link"] = True
+        return
+
+    # Добавление: ссылка
+    if context.user_data.get("awaiting_add_link") is True:
+        context.user_data["awaiting_add_link"] = False
+        link = text
+        if link == "-":
+            link = ""
+        context.user_data["add_link"] = link
+        await update.effective_message.reply_text(
+            "Теперь теги (через пробел или запятую). Например: матан, экзамен, интеграл"
+        )
+        context.user_data["awaiting_add_tags"] = True
+        return
+
+    # Добавление: теги
+    if context.user_data.get("awaiting_add_tags") is True:
+        context.user_data["awaiting_add_tags"] = False
+        tags = normalize_tags(text)
+        context.user_data["add_tags"] = tags
+        await update.effective_message.reply_text(
+            "Последний шаг: пришли файл (документом) или напиши: - (если без файла)"
+        )
+        context.user_data["awaiting_add_file"] = True
+        return
+
+    await update.effective_message.reply_text(
+        "Я понимаю команды через кнопки. Открой меню:",
+        reply_markup=main_menu_keyboard(is_admin=True),
+    )
+
+
+# ----------------------------
+# Добавление материала: приём файла
+# ----------------------------
+
+async def file_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_message is None or update.effective_user is None:
+        return
+
+    if not is_private_chat(update):
+        return
+
+    if not require_admin(update):
+        return
+
+    if context.user_data.get("awaiting_add_file") is not True:
+        return
+
+    message: Message = update.effective_message
+
+    # Если отправили документ
+    if message.document is not None:
+        file_id = message.document.file_id
+        context.user_data["awaiting_add_file"] = False
+        await finalize_add_material(update, context, file_id=file_id)
+        return
+
+    # Если прислали не документ
+    await update.effective_message.reply_text(
+        "Нужен файл как документ, или напиши '-' чтобы добавить без файла."
+    )
+
+
+async def finalize_add_material(update: Update, context: ContextTypes.DEFAULT_TYPE, file_id: str) -> None:
+    category_id = int(context.user_data.get("add_category_id", 0))
+    title = str(context.user_data.get("add_title", "")).strip()
+    description = str(context.user_data.get("add_description", "")).strip()
+    link = str(context.user_data.get("add_link", "")).strip()
+    tags = str(context.user_data.get("add_tags", "")).strip()
+
+    if not link:
+        link = "—"
+
+    if category_id <= 0 or not title or not description or not tags:
+        await update.effective_message.reply_text(
+            "Не хватает данных для сохранения. Давай начнём заново: /start"
+        )
+        return
+
+    material_id = db.add_material(
+        category_id=category_id,
+        title=title,
+        description=description,
+        link=link,
+        tags=tags,
+        file_id=file_id or "",
+    )
+
+    destination = db.get_destination_for_category(category_id)
+
+    if destination:
+        chat_id, thread_id = destination
+
+        try:
+            material = db.get_material(material_id)
+
+            if material is not None:
+                await context.application.bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=thread_id,
+                    text=format_material_text(material),
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+
+                if material.file_id.strip():
+                    await context.application.bot.send_document(
+                        chat_id=chat_id,
+                        message_thread_id=thread_id,
+                        document=material.file_id.strip(),
+                        caption=material.title,
+                    )
+
+        except Exception as error:
+            logger.error("Ошибка автоотправки: %s", error)
+
+    await update.effective_message.reply_text(
+        f"Сохранено ✅ (ID: {material_id})",
+        reply_markup=main_menu_keyboard(is_admin=True),
+    )
+
+
+# ----------------------------
+# Отправка материала в чат/группу
+# ----------------------------
+
+async def send_material_to_chat(application: Application, chat_id: int, material: Material) -> None:
+    text = format_material_text(material)
+
+    # Сначала отправляем текст
+    await application.bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+    # Потом файл, если он есть
+    if material.file_id.strip():
+        await application.bot.send_document(
+            chat_id=chat_id,
+            document=material.file_id.strip(),
+            caption=f"{material.title}",
+        )
+
+
+# ----------------------------
+# Игнор в группах (чтобы “не отвечал”)
+# ----------------------------
+
+async def ignore_non_command_messages_in_groups(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+    if update.effective_message is None:
+        return
+
+    text = update.effective_message.text or ""
+
+    # реагируем только на сообщения с #
+    if "#" not in text:
+        return
+
+    results = db.search_materials(text, limit=5)
+
+    if not results:
+        return
+
+    for material in results:
+        await update.effective_message.reply_text(
+            format_material_text(material),
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+
+# ----------------------------
+# Запуск
+# ----------------------------
+
+def build_application() -> Application:
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Команды
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("register", register_group_command))
+    application.add_handler(CommandHandler("bind_category", bind_category_command))
+    application.add_handler(CommandHandler("deadline", deadline_command))
+    application.add_handler(CommandHandler("deadlines", deadlines_command)) 
+
+    # Кнопки меню
+    application.add_handler(CallbackQueryHandler(menu_callback))
+
+    # В личке: сначала обрабатываем обычный текст (без команд)
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+            text_router,
+        )
+    )
+
+    # В личке: отдельно обрабатываем документы
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & filters.Document.ALL,
+            file_router,
+        )
+    )
+
+    # В группах: игнорировать все обычные сообщения
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & ~filters.COMMAND,
+            ignore_non_command_messages_in_groups,
+        )
+    )
+
+    # Автоматическая проверка дедлайнов каждый час
+    application.job_queue.run_repeating(
+        lambda context: check_deadlines(context.application),
+        interval=3600,
+        first=60,
+    )
+
+    return application
+
+
+def main() -> None:
+    application = build_application()
+
+    webhook_url = f"{RENDER_EXTERNAL_URL}/{WEBHOOK_PATH}"
+
+    logger.info("Бот запускается в режиме webhook")
+    logger.info("PORT: %s", PORT)
+    logger.info("Webhook URL: %s", webhook_url)
+
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=WEBHOOK_PATH,
+        webhook_url=webhook_url,
+        secret_token=WEBHOOK_SECRET if WEBHOOK_SECRET else None,
+        drop_pending_updates=True,
+    )
+
+
+if __name__ == "__main__":
+    main()
