@@ -1481,6 +1481,14 @@ def build_application() -> Application:
     return application
 
 
+from tornado.web import RequestHandler
+
+
+class HealthHandler(RequestHandler):
+    def get(self):
+        self.write("OK")
+
+
 def main() -> None:
     application = build_application()
 
@@ -1497,6 +1505,7 @@ def main() -> None:
         webhook_url=webhook_url,
         secret_token=WEBHOOK_SECRET if WEBHOOK_SECRET else None,
         drop_pending_updates=True,
+        extra_routes=[(r"/health", HealthHandler)],
     )
 
 
