@@ -1,0 +1,7 @@
+.env
+.venv/
+*.sqlite3
+study_library.sqlite3
+data/
+__pycache__/
+*.py[cod]
