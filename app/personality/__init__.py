@@ -1,4 +1,4 @@
-from app.personality.pickme_pepe import PepeMode, PickmePepePersonality, get_system_prompt
+from app.personality.pickme_pepe import PICKME_PEPE, PepeMode, PickmePepePersonality, get_system_prompt
 
 
-__all__ = ["PepeMode", "PickmePepePersonality", "get_system_prompt"]
+__all__ = ["PICKME_PEPE", "PepeMode", "PickmePepePersonality", "get_system_prompt"]

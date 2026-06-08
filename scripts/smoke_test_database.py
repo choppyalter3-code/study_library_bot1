@@ -20,6 +20,7 @@ from app.config import load_config
 from app.database import create_database
 from app.personality.pickme_pepe import PepeMode, get_system_prompt
 from app.services.analytics_service import AnalyticsService
+from app.services.personality_service import build_pepe_context, generate_personality_context
 from app.services.search_history_service import get_recent_search_queries, log_search_query
 from app.services.views_service import (
     get_popular_materials,
@@ -125,6 +126,21 @@ def assert_pickme_pepe_prompts() -> None:
         assert_true(mode.name in prompt, f"Mode name missing in prompt for {mode.name}")
 
 
+def assert_pickme_pepe_runtime_context() -> None:
+    for mode in PepeMode:
+        context = build_pepe_context(mode)
+        assert_true(context.mode == mode, f"Invalid runtime mode for {mode.name}")
+        assert_true(bool(context.system_prompt.strip()), f"Empty runtime prompt for {mode.name}")
+        assert_true(bool(context.behavior_rules), f"Missing behavior rules for {mode.name}")
+        assert_true(bool(context.style_examples), f"Missing style examples for {mode.name}")
+
+        payload = generate_personality_context(mode)
+        assert_true(payload["mode"] == mode.value, f"Invalid payload mode for {mode.name}")
+        assert_true(bool(payload["system_prompt"]), f"Empty payload prompt for {mode.name}")
+        assert_true(bool(payload["behavior_rules"]), f"Missing payload rules for {mode.name}")
+        assert_true(bool(payload["style_examples"]), f"Missing payload examples for {mode.name}")
+
+
 def main() -> int:
     load_dotenv()
 
@@ -134,6 +150,7 @@ def main() -> int:
 
     try:
         assert_pickme_pepe_prompts()
+        assert_pickme_pepe_runtime_context()
 
         config = load_config()
         db = create_database(config)
