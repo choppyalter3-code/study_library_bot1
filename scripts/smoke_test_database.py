@@ -18,6 +18,7 @@ except ModuleNotFoundError:
 
 from app.config import load_config
 from app.database import create_database
+from app.services.analytics_service import AnalyticsService
 from app.services.search_history_service import get_recent_search_queries, log_search_query
 from app.services.views_service import (
     get_popular_materials,
@@ -153,6 +154,9 @@ def main() -> int:
             file_id="",
         )
         assert_true(isinstance(material_id, int) and material_id > 0, "add_material failed")
+        analytics = AnalyticsService(db)
+        searches_before = analytics.get_search_count()
+        views_before = analytics.get_views_count()
 
         db.add_favorite(user_id, material_id)
         db.add_favorite(user_id, material_id)
@@ -176,6 +180,15 @@ def main() -> int:
             any(search.query == "smoke test query" and search.created_at_iso for search in recent_searches),
             "get_recent_search_queries failed",
         )
+        assert_true(
+            analytics.get_search_count() >= searches_before + 1,
+            "get_search_count failed",
+        )
+        top_queries = analytics.get_top_search_queries(limit=10000)
+        assert_true(
+            any(item.query == "smoke test query" and item.search_count > 0 for item in top_queries),
+            "get_top_search_queries failed",
+        )
 
         log_material_view(db, user_id, material_id)
         material_views = get_user_material_views(db, user_id, limit=10)
@@ -183,11 +196,25 @@ def main() -> int:
             contains_material_view(material_views, material_id),
             "get_user_material_views failed",
         )
+        assert_true(
+            analytics.get_views_count() >= views_before + 1,
+            "get_views_count failed",
+        )
+        recent_views = analytics.get_recent_views(limit=10000)
+        assert_true(
+            contains_material_view(recent_views, material_id),
+            "get_recent_views failed",
+        )
 
-        popular_materials = get_popular_materials(db, limit=100)
+        popular_materials = get_popular_materials(db, limit=10000)
         assert_true(
             contains_popular_material(popular_materials, material_id),
             "get_popular_materials failed",
+        )
+        most_viewed_materials = analytics.get_most_viewed_materials(limit=10000)
+        assert_true(
+            contains_popular_material(most_viewed_materials, material_id),
+            "get_most_viewed_materials failed",
         )
 
         print("SUCCESS")

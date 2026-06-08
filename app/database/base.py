@@ -1,6 +1,6 @@
 from typing import List, Optional, Protocol, Tuple
 
-from app.models import Category, Material, MaterialView, PopularMaterial, SearchLog
+from app.models import Category, Material, MaterialView, PopularMaterial, SearchLog, SearchQueryStat
 
 
 class BaseDatabase(Protocol):
@@ -28,8 +28,12 @@ class BaseDatabase(Protocol):
     def log_material_view(self, user_id: int, material_id: int) -> None: ...
     def log_search(self, user_id: int, query: str, results_count: int) -> None: ...
     def list_material_views(self, user_id: int, limit: int = 20) -> List[MaterialView]: ...
+    def list_recent_material_views(self, limit: int = 20) -> List[MaterialView]: ...
     def list_recent_searches(self, user_id: int, limit: int = 10) -> List[SearchLog]: ...
     def list_popular_materials(self, limit: int = 10) -> List[PopularMaterial]: ...
+    def list_top_search_queries(self, limit: int = 20) -> List[SearchQueryStat]: ...
+    def count_searches(self) -> int: ...
+    def count_material_views(self) -> int: ...
 
 
 STARTER_CATEGORIES = [
@@ -84,4 +88,11 @@ def row_to_popular_material(row) -> PopularMaterial:
     return PopularMaterial(
         material=row_to_material(row),
         views_count=int(row["views_count"]),
+    )
+
+
+def row_to_search_query_stat(row) -> SearchQueryStat:
+    return SearchQueryStat(
+        query=str(row["query"]),
+        search_count=int(row["search_count"]),
     )

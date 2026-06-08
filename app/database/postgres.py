@@ -7,9 +7,10 @@ from app.database.base import (
     row_to_material,
     row_to_material_view,
     row_to_popular_material,
+    row_to_search_query_stat,
     row_to_search_log,
 )
-from app.models import Category, Material, MaterialView, PopularMaterial, SearchLog
+from app.models import Category, Material, MaterialView, PopularMaterial, SearchLog, SearchQueryStat
 from app.services.deadlines_service import parse_deadline_date
 
 
@@ -466,6 +467,22 @@ class PostgresDatabase:
                 )
                 return [row_to_material_view(row) for row in cursor.fetchall()]
 
+    def list_recent_material_views(self, limit: int = 20) -> List[MaterialView]:
+        with self._get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT m.material_id, m.category_id, m.title, m.description, m.link, m.tags, m.file_id, m.created_at,
+                           mv.viewed_at
+                    FROM material_views mv
+                    JOIN materials m ON m.material_id = mv.material_id
+                    ORDER BY mv.viewed_at DESC, mv.id DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                return [row_to_material_view(row) for row in cursor.fetchall()]
+
     def list_recent_searches(self, user_id: int, limit: int = 10) -> List[SearchLog]:
         with self._get_connection() as connection:
             with connection.cursor() as cursor:
@@ -497,3 +514,30 @@ class PostgresDatabase:
                     (limit,),
                 )
                 return [row_to_popular_material(row) for row in cursor.fetchall()]
+
+    def list_top_search_queries(self, limit: int = 20) -> List[SearchQueryStat]:
+        with self._get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT query, COUNT(id) AS search_count
+                    FROM search_logs
+                    GROUP BY query
+                    ORDER BY search_count DESC, MAX(created_at) DESC, query ASC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                return [row_to_search_query_stat(row) for row in cursor.fetchall()]
+
+    def count_searches(self) -> int:
+        with self._get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) AS c FROM search_logs")
+                return int(cursor.fetchone()["c"])
+
+    def count_material_views(self) -> int:
+        with self._get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) AS c FROM material_views")
+                return int(cursor.fetchone()["c"])

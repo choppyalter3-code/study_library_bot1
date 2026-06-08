@@ -38,3 +38,9 @@ class SearchLog:
 class PopularMaterial:
     material: Material
     views_count: int
+
+
+@dataclass
+class SearchQueryStat:
+    query: str
+    search_count: int

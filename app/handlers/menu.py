@@ -14,6 +14,7 @@ from app.keyboards import (
     material_view_keyboard,
     materials_keyboard,
 )
+from app.services.analytics_service import format_admin_statistics
 from app.services.materials_service import format_material_text
 from app.services.telegram_service import send_material_to_chat
 from app.services.views_service import log_material_view
@@ -229,6 +230,21 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await query.edit_message_text(
             text,
             reply_markup=favorites_keyboard(favorites),
+        )
+        return
+
+    if data == "MENU_ANALYTICS":
+        clear_interaction_state(context)
+        if not is_admin:
+            await query.answer(
+                "Только администратор может смотреть статистику",
+                show_alert=True,
+            )
+            return
+
+        await query.edit_message_text(
+            format_admin_statistics(db),
+            reply_markup=back_to_main_keyboard(),
         )
         return
 

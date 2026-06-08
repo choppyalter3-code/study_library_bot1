@@ -14,6 +14,9 @@ def main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
 
     if is_admin:
         keyboard.append(
+            [InlineKeyboardButton(text="📊 Статистика", callback_data="MENU_ANALYTICS")]
+        )
+        keyboard.append(
             [InlineKeyboardButton(text="➕ Добавить материал", callback_data="MENU_ADD")]
         )
 
