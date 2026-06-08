@@ -18,6 +18,7 @@ except ModuleNotFoundError:
 
 from app.config import load_config
 from app.database import create_database
+from app.personality.character_engine import generate_character_engine_context, get_character_engine
 from app.personality.pickme_pepe import PepeMode, get_system_prompt
 from app.services.analytics_service import AnalyticsService
 from app.services.personality_service import build_pepe_context, generate_personality_context
@@ -141,6 +142,20 @@ def assert_pickme_pepe_runtime_context() -> None:
         assert_true(bool(payload["style_examples"]), f"Missing payload examples for {mode.name}")
 
 
+def assert_pickme_pepe_character_engine() -> None:
+    engine = get_character_engine()
+    assert_true(bool(engine.tone_variants), "Missing tone variants")
+    assert_true(bool(engine.sarcasm_variants), "Missing sarcasm variants")
+    assert_true(bool(engine.jab_variants), "Missing jab variants")
+    assert_true(bool(engine.anti_npc_rules), "Missing anti-NPC rules")
+
+    context = generate_character_engine_context()
+    assert_true(bool(context["tone_variants"]), "Missing tone variants context")
+    assert_true(bool(context["sarcasm_variants"]), "Missing sarcasm variants context")
+    assert_true(bool(context["jab_variants"]), "Missing jab variants context")
+    assert_true(bool(context["anti_npc_rules"]), "Missing anti-NPC rules context")
+
+
 def main() -> int:
     load_dotenv()
 
@@ -151,6 +166,7 @@ def main() -> int:
     try:
         assert_pickme_pepe_prompts()
         assert_pickme_pepe_runtime_context()
+        assert_pickme_pepe_character_engine()
 
         config = load_config()
         db = create_database(config)
