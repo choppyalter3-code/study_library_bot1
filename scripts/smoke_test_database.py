@@ -18,17 +18,20 @@ except ModuleNotFoundError:
 
 from app.config import load_config
 from app.database import create_database
-from app.handlers.pepe import generate_pepe_stub_reply
+from app.handlers.pepe import generate_pepe_response, split_telegram_reply
 from app.personality.character_engine import generate_character_engine_context, get_character_engine
 from app.personality.pickme_pepe import PepeMode, get_system_prompt
 from app.services.analytics_service import AnalyticsService
 from app.services.llm_service import (
+    DEFAULT_OPENROUTER_MODEL,
     LLMProvider,
     LLMProviderNotConfiguredError,
+    LLMRuntimeConfig,
     build_llm_request,
     generate_response,
     get_llm_adapter,
     normalize_provider,
+    parse_openrouter_response,
 )
 from app.services.personality_service import build_pepe_context, generate_personality_context
 from app.services.search_history_service import get_recent_search_queries, log_search_query
@@ -178,9 +181,24 @@ def assert_llm_adapter_foundation() -> None:
     assert_true(bool(request.character_engine_context), "Missing LLM request character context")
     assert_true(normalize_provider("stub") == LLMProvider.STUB, "LLM provider normalization failed")
     assert_true(get_llm_adapter("openai").provider == LLMProvider.OPENAI, "Missing OpenAI adapter placeholder")
+    openrouter_config = LLMRuntimeConfig(
+        openrouter_api_key="smoke-openrouter-key",
+        openrouter_model="smoke-openrouter-model",
+    )
     assert_true(
-        get_llm_adapter("openrouter").provider == LLMProvider.OPENROUTER,
+        get_llm_adapter("openrouter", runtime_config=openrouter_config).provider == LLMProvider.OPENROUTER,
         "Missing OpenRouter adapter placeholder",
+    )
+    default_model_config = LLMRuntimeConfig(
+        openrouter_api_key="smoke-openrouter-key",
+        openrouter_model="",
+    )
+    default_model_adapter = get_llm_adapter("openrouter", runtime_config=default_model_config)
+    assert_true(default_model_adapter.provider == LLMProvider.OPENROUTER, "OpenRouter default model failed")
+    assert_true(default_model_adapter.model == DEFAULT_OPENROUTER_MODEL, "Invalid OpenRouter default model")
+    assert_true(
+        get_llm_adapter("openrouter").provider == LLMProvider.STUB,
+        "OpenRouter adapter must fallback to STUB without API key",
     )
     assert_true(get_llm_adapter("local").provider == LLMProvider.LOCAL, "Missing local LLM adapter placeholder")
 
@@ -192,6 +210,17 @@ def assert_llm_adapter_foundation() -> None:
     assert_true(response.provider == LLMProvider.STUB, "Invalid stub LLM provider")
     assert_true(response.is_generated is False, "Stub LLM response must not be marked generated")
     assert_true(bool(response.text.strip()), "Empty stub LLM response")
+    openrouter_fallback_response = generate_response(
+        user_message=request.user_message,
+        pepe_context=request.pepe_context,
+        character_engine_context=request.character_engine_context,
+        provider=LLMProvider.OPENROUTER,
+    )
+    assert_true(openrouter_fallback_response.provider == LLMProvider.STUB, "OpenRouter fallback failed")
+    assert_true(
+        openrouter_fallback_response.is_generated is False,
+        "OpenRouter fallback must not be marked generated",
+    )
 
     try:
         get_llm_adapter(LLMProvider.OPENAI).generate_response(request)
@@ -202,9 +231,29 @@ def assert_llm_adapter_foundation() -> None:
 
 
 def assert_pepe_command_stub_foundation() -> None:
-    response_text = generate_pepe_stub_reply("smoke pepe command")
-    assert_true(bool(response_text.strip()), "Empty /pepe stub response")
-    assert_true("LLM provider is not connected yet" in response_text, "Invalid /pepe stub provider response")
+    response = generate_pepe_response("smoke pepe command")
+    assert_true(response.provider == LLMProvider.STUB, "Invalid /pepe fallback provider")
+    assert_true(bool(response.text.strip()), "Empty /pepe stub response")
+    assert_true("LLM provider is not connected yet" in response.text, "Invalid /pepe stub provider response")
+
+    chunks = split_telegram_reply("x" * 4101, max_length=4000)
+    assert_true(len(chunks) == 2, "Long /pepe reply must be split")
+    assert_true(all(len(chunk) <= 4000 for chunk in chunks), "Split /pepe reply chunk is too long")
+
+
+def assert_openrouter_response_parser() -> None:
+    parsed_text = parse_openrouter_response(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "Smoke OpenRouter response",
+                    },
+                }
+            ]
+        }
+    )
+    assert_true(parsed_text == "Smoke OpenRouter response", "OpenRouter parser failed")
 
 
 def main() -> int:
@@ -220,6 +269,7 @@ def main() -> int:
         assert_pickme_pepe_character_engine()
         assert_llm_adapter_foundation()
         assert_pepe_command_stub_foundation()
+        assert_openrouter_response_parser()
 
         config = load_config()
         db = create_database(config)

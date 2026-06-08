@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_OPENROUTER_MODEL = "openrouter/auto"
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,8 @@ class Config:
     webhook_secret: str
     database_path: str
     database_url: str
+    openrouter_api_key: str
+    openrouter_model: str
 
 
 def require_env(name: str) -> str:
@@ -64,4 +67,6 @@ def load_config() -> Config:
             os.path.join(BASE_DIR, "data", "study_library.sqlite3"),
         ).strip(),
         database_url=os.getenv("DATABASE_URL", "").strip(),
+        openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
+        openrouter_model=os.getenv("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL).strip() or DEFAULT_OPENROUTER_MODEL,
     )
