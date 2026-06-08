@@ -1,6 +1,6 @@
 from typing import List, Optional, Protocol, Tuple
 
-from app.models import Category, Material
+from app.models import Category, Material, MaterialView, PopularMaterial, SearchLog
 
 
 class BaseDatabase(Protocol):
@@ -27,6 +27,9 @@ class BaseDatabase(Protocol):
     def list_favorites(self, user_id: int) -> List[Material]: ...
     def log_material_view(self, user_id: int, material_id: int) -> None: ...
     def log_search(self, user_id: int, query: str, results_count: int) -> None: ...
+    def list_material_views(self, user_id: int, limit: int = 20) -> List[MaterialView]: ...
+    def list_recent_searches(self, user_id: int, limit: int = 10) -> List[SearchLog]: ...
+    def list_popular_materials(self, limit: int = 10) -> List[PopularMaterial]: ...
 
 
 STARTER_CATEGORIES = [
@@ -59,4 +62,26 @@ def row_to_material(row) -> Material:
         tags=str(row["tags"]),
         file_id=str(row["file_id"]),
         created_at_iso=str(row["created_at"]),
+    )
+
+
+def row_to_material_view(row) -> MaterialView:
+    return MaterialView(
+        material=row_to_material(row),
+        viewed_at_iso=str(row["viewed_at"]),
+    )
+
+
+def row_to_search_log(row) -> SearchLog:
+    return SearchLog(
+        query=str(row["query"]),
+        results_count=int(row["results_count"]),
+        created_at_iso=str(row["created_at"]),
+    )
+
+
+def row_to_popular_material(row) -> PopularMaterial:
+    return PopularMaterial(
+        material=row_to_material(row),
+        views_count=int(row["views_count"]),
     )

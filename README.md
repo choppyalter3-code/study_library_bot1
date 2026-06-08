@@ -94,6 +94,7 @@ SQLite остаётся локальным fallback-режимом. Рабочу
 - какой backend используется: `sqlite` или `postgres`;
 - создание схемы;
 - наличие таблиц `users`, `favorites`, `material_views`, `search_logs`;
+- повторное `add_favorite` без создания дублей;
 - методы `get_or_create_user`, `add_favorite`, `remove_favorite`, `list_favorites`, `log_search`, `log_material_view`.
 
 Запуск для локального SQLite:
@@ -179,11 +180,14 @@ app/
 │   ├── __init__.py
 │   ├── deadlines_service.py
 │   ├── materials_service.py
-│   └── telegram_service.py
+│   ├── search_history_service.py
+│   ├── telegram_service.py
+│   └── views_service.py
 └── utils/
     ├── __init__.py
     ├── chat.py
     ├── context.py
+    ├── favorites.py
     ├── security.py
     ├── state.py
     └── users.py

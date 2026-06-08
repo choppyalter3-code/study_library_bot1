@@ -18,6 +18,12 @@ except ModuleNotFoundError:
 
 from app.config import load_config
 from app.database import create_database
+from app.services.search_history_service import get_recent_search_queries, log_search_query
+from app.services.views_service import (
+    get_popular_materials,
+    get_user_material_views,
+    log_material_view,
+)
 
 
 REQUIRED_TABLES = {
@@ -102,6 +108,14 @@ def count_material(materials: Iterable, material_id: int) -> int:
     return sum(1 for material in materials if material.material_id == material_id)
 
 
+def contains_material_view(views: Iterable, material_id: int) -> bool:
+    return any(view.material.material_id == material_id for view in views)
+
+
+def contains_popular_material(materials: Iterable, material_id: int) -> bool:
+    return any(item.material.material_id == material_id and item.views_count > 0 for item in materials)
+
+
 def main() -> int:
     load_dotenv()
 
@@ -156,8 +170,25 @@ def main() -> int:
             "remove_favorite failed",
         )
 
-        db.log_search(user_id, "smoke test query", 1)
-        db.log_material_view(user_id, material_id)
+        log_search_query(db, user_id, "smoke test query", 1)
+        recent_searches = get_recent_search_queries(db, user_id, limit=10)
+        assert_true(
+            any(search.query == "smoke test query" and search.created_at_iso for search in recent_searches),
+            "get_recent_search_queries failed",
+        )
+
+        log_material_view(db, user_id, material_id)
+        material_views = get_user_material_views(db, user_id, limit=10)
+        assert_true(
+            contains_material_view(material_views, material_id),
+            "get_user_material_views failed",
+        )
+
+        popular_materials = get_popular_materials(db, limit=100)
+        assert_true(
+            contains_popular_material(popular_materials, material_id),
+            "get_popular_materials failed",
+        )
 
         print("SUCCESS")
         return 0

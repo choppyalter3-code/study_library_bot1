@@ -19,3 +19,22 @@ class Material:
     tags: str
     file_id: str
     created_at_iso: str
+
+
+@dataclass
+class MaterialView:
+    material: Material
+    viewed_at_iso: str
+
+
+@dataclass
+class SearchLog:
+    query: str
+    results_count: int
+    created_at_iso: str
+
+
+@dataclass
+class PopularMaterial:
+    material: Material
+    views_count: int

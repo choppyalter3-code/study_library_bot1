@@ -5,6 +5,7 @@ from telegram.ext import ContextTypes
 from app.handlers.materials import finalize_add_material
 from app.keyboards import add_cancel_keyboard, main_menu_keyboard, material_view_keyboard
 from app.services.materials_service import format_material_text, normalize_tags
+from app.services.search_history_service import log_search_query
 from app.utils.chat import is_private_chat
 from app.utils.context import get_db
 from app.utils.favorites import is_favorite
@@ -18,7 +19,7 @@ async def handle_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE,
     results = db.search_materials(text, limit=10)
     user_id = get_or_create_user_from_update(db, update)
     if user_id is not None:
-        db.log_search(user_id, text, len(results))
+        log_search_query(db, user_id, text, len(results))
 
     if not results:
         await update.effective_message.reply_text(

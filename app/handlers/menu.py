@@ -16,6 +16,7 @@ from app.keyboards import (
 )
 from app.services.materials_service import format_material_text
 from app.services.telegram_service import send_material_to_chat
+from app.services.views_service import log_material_view
 from app.utils.chat import is_private_chat
 from app.utils.context import get_db
 from app.utils.favorites import is_favorite
@@ -154,7 +155,7 @@ async def _show_material_card(
     favorite_state = False
     if user_id is not None:
         if log_view:
-            db.log_material_view(user_id, material.material_id)
+            log_material_view(db, user_id, material.material_id)
         favorite_state = is_favorite(db, user_id, material.material_id)
 
     await query.edit_message_text(

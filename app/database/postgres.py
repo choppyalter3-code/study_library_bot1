@@ -1,8 +1,15 @@
 from datetime import datetime
 from typing import List, Optional, Tuple
 
-from app.database.base import STARTER_CATEGORIES, row_to_category, row_to_material
-from app.models import Category, Material
+from app.database.base import (
+    STARTER_CATEGORIES,
+    row_to_category,
+    row_to_material,
+    row_to_material_view,
+    row_to_popular_material,
+    row_to_search_log,
+)
+from app.models import Category, Material, MaterialView, PopularMaterial, SearchLog
 from app.services.deadlines_service import parse_deadline_date
 
 
@@ -441,3 +448,52 @@ class PostgresDatabase:
                     (user_id, query, results_count, datetime.utcnow().isoformat()),
                 )
             connection.commit()
+
+    def list_material_views(self, user_id: int, limit: int = 20) -> List[MaterialView]:
+        with self._get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT m.material_id, m.category_id, m.title, m.description, m.link, m.tags, m.file_id, m.created_at,
+                           mv.viewed_at
+                    FROM material_views mv
+                    JOIN materials m ON m.material_id = mv.material_id
+                    WHERE mv.user_id = %s
+                    ORDER BY mv.viewed_at DESC, mv.id DESC
+                    LIMIT %s
+                    """,
+                    (user_id, limit),
+                )
+                return [row_to_material_view(row) for row in cursor.fetchall()]
+
+    def list_recent_searches(self, user_id: int, limit: int = 10) -> List[SearchLog]:
+        with self._get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT query, results_count, created_at
+                    FROM search_logs
+                    WHERE user_id = %s
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT %s
+                    """,
+                    (user_id, limit),
+                )
+                return [row_to_search_log(row) for row in cursor.fetchall()]
+
+    def list_popular_materials(self, limit: int = 10) -> List[PopularMaterial]:
+        with self._get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT m.material_id, m.category_id, m.title, m.description, m.link, m.tags, m.file_id, m.created_at,
+                           COUNT(mv.id) AS views_count
+                    FROM material_views mv
+                    JOIN materials m ON m.material_id = mv.material_id
+                    GROUP BY m.material_id, m.category_id, m.title, m.description, m.link, m.tags, m.file_id, m.created_at
+                    ORDER BY views_count DESC, MAX(mv.viewed_at) DESC, m.material_id DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                return [row_to_popular_material(row) for row in cursor.fetchall()]
