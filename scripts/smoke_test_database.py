@@ -21,6 +21,14 @@ from app.database import create_database
 from app.personality.character_engine import generate_character_engine_context, get_character_engine
 from app.personality.pickme_pepe import PepeMode, get_system_prompt
 from app.services.analytics_service import AnalyticsService
+from app.services.llm_service import (
+    LLMProvider,
+    LLMProviderNotConfiguredError,
+    build_llm_request,
+    generate_response,
+    get_llm_adapter,
+    normalize_provider,
+)
 from app.services.personality_service import build_pepe_context, generate_personality_context
 from app.services.search_history_service import get_recent_search_queries, log_search_query
 from app.services.views_service import (
@@ -156,6 +164,42 @@ def assert_pickme_pepe_character_engine() -> None:
     assert_true(bool(context["anti_npc_rules"]), "Missing anti-NPC rules context")
 
 
+def assert_llm_adapter_foundation() -> None:
+    pepe_context = build_pepe_context(PepeMode.SOFT)
+    character_context = generate_character_engine_context()
+    request = build_llm_request(
+        user_message="Пепе, помоги с дедлайном",
+        pepe_context=pepe_context,
+        character_engine_context=character_context,
+    )
+    assert_true(request.user_message == "Пепе, помоги с дедлайном", "Invalid LLM request message")
+    assert_true(request.pepe_context.mode == PepeMode.SOFT, "Invalid LLM request Pepe context")
+    assert_true(bool(request.character_engine_context), "Missing LLM request character context")
+    assert_true(normalize_provider("stub") == LLMProvider.STUB, "LLM provider normalization failed")
+    assert_true(get_llm_adapter("openai").provider == LLMProvider.OPENAI, "Missing OpenAI adapter placeholder")
+    assert_true(
+        get_llm_adapter("openrouter").provider == LLMProvider.OPENROUTER,
+        "Missing OpenRouter adapter placeholder",
+    )
+    assert_true(get_llm_adapter("local").provider == LLMProvider.LOCAL, "Missing local LLM adapter placeholder")
+
+    response = generate_response(
+        user_message=request.user_message,
+        pepe_context=request.pepe_context,
+        character_engine_context=request.character_engine_context,
+    )
+    assert_true(response.provider == LLMProvider.STUB, "Invalid stub LLM provider")
+    assert_true(response.is_generated is False, "Stub LLM response must not be marked generated")
+    assert_true(bool(response.text.strip()), "Empty stub LLM response")
+
+    try:
+        get_llm_adapter(LLMProvider.OPENAI).generate_response(request)
+    except LLMProviderNotConfiguredError:
+        pass
+    else:
+        raise AssertionError("OpenAI adapter must stay disconnected at this stage")
+
+
 def main() -> int:
     load_dotenv()
 
@@ -167,6 +211,7 @@ def main() -> int:
         assert_pickme_pepe_prompts()
         assert_pickme_pepe_runtime_context()
         assert_pickme_pepe_character_engine()
+        assert_llm_adapter_foundation()
 
         config = load_config()
         db = create_database(config)
