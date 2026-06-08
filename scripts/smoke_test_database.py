@@ -18,6 +18,7 @@ except ModuleNotFoundError:
 
 from app.config import load_config
 from app.database import create_database
+from app.handlers.pepe import generate_pepe_stub_reply
 from app.personality.character_engine import generate_character_engine_context, get_character_engine
 from app.personality.pickme_pepe import PepeMode, get_system_prompt
 from app.services.analytics_service import AnalyticsService
@@ -200,6 +201,12 @@ def assert_llm_adapter_foundation() -> None:
         raise AssertionError("OpenAI adapter must stay disconnected at this stage")
 
 
+def assert_pepe_command_stub_foundation() -> None:
+    response_text = generate_pepe_stub_reply("smoke pepe command")
+    assert_true(bool(response_text.strip()), "Empty /pepe stub response")
+    assert_true("LLM provider is not connected yet" in response_text, "Invalid /pepe stub provider response")
+
+
 def main() -> int:
     load_dotenv()
 
@@ -212,6 +219,7 @@ def main() -> int:
         assert_pickme_pepe_runtime_context()
         assert_pickme_pepe_character_engine()
         assert_llm_adapter_foundation()
+        assert_pepe_command_stub_foundation()
 
         config = load_config()
         db = create_database(config)

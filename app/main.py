@@ -14,6 +14,7 @@ from app.handlers.admin import (
 from app.handlers.deadlines import check_deadlines, deadline_command, deadlines_command
 from app.handlers.materials import file_router, ignore_non_command_messages_in_groups
 from app.handlers.menu import menu_callback
+from app.handlers.pepe import pepe_command
 from app.handlers.search import text_router
 
 
@@ -41,6 +42,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("bind_category", bind_category_command))
     application.add_handler(CommandHandler("deadline", deadline_command))
     application.add_handler(CommandHandler("deadlines", deadlines_command))
+    application.add_handler(CommandHandler("pepe", pepe_command))
 
     application.add_handler(CallbackQueryHandler(menu_callback))
 
