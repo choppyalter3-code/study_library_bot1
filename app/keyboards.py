@@ -2,11 +2,14 @@ from typing import List
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.models import Material
+
 
 def main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton(text="📚 Библиотека", callback_data="MENU_LIBRARY")],
         [InlineKeyboardButton(text="🔎 Поиск", callback_data="MENU_SEARCH")],
+        [InlineKeyboardButton(text="⭐ Избранное", callback_data="MENU_FAVORITES")],
     ]
 
     if is_admin:
@@ -62,7 +65,7 @@ def materials_keyboard(db, category_id: int) -> InlineKeyboardMarkup:
                 [
                     InlineKeyboardButton(
                         text=title[:45],
-                        callback_data=f"MATERIAL_{material.material_id}",
+                        callback_data=f"MATERIAL_{material.material_id}_LIB-{category_id}",
                     )
                 ]
             )
@@ -76,22 +79,83 @@ def materials_keyboard(db, category_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 
-def material_view_keyboard(material_id: int, is_admin: bool = False) -> InlineKeyboardMarkup:
+def favorites_keyboard(materials: List[Material]) -> InlineKeyboardMarkup:
     keyboard: List[List[InlineKeyboardButton]] = []
 
-    if is_admin:
+    if not materials:
         keyboard.append(
-            [InlineKeyboardButton(text="📣 Отправить в группу", callback_data=f"SEND_{material_id}")]
+            [InlineKeyboardButton(text="(В избранном пока пусто)", callback_data="NOOP")]
         )
+    else:
+        for material in materials[:30]:
+            title = material.title if material.title else "Без названия"
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=title[:45],
+                        callback_data=f"MATERIAL_{material.material_id}_FAV",
+                    )
+                ]
+            )
 
-    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="BACK_FROM_MATERIAL")])
     keyboard.append([InlineKeyboardButton(text="🏠 В меню", callback_data="MENU_MAIN")])
     return InlineKeyboardMarkup(keyboard)
 
 
-def groups_keyboard(db, material_id: int) -> InlineKeyboardMarkup:
+def material_view_keyboard(
+    material_id: int,
+    is_admin: bool = False,
+    is_favorite: bool = False,
+    back_callback: str = "BACK_FROM_MATERIAL",
+    origin: str | None = None,
+) -> InlineKeyboardMarkup:
+    keyboard: List[List[InlineKeyboardButton]] = []
+    callback_suffix = f"_{origin}" if origin else ""
+
+    if is_favorite:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="⭐ Убрать из избранного",
+                    callback_data=f"FAVORITE_REMOVE_{material_id}{callback_suffix}",
+                )
+            ]
+        )
+    else:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="☆ В избранное",
+                    callback_data=f"FAVORITE_ADD_{material_id}{callback_suffix}",
+                )
+            ]
+        )
+
+    if is_admin:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="📣 Отправить в группу",
+                    callback_data=f"SEND_{material_id}{callback_suffix}",
+                )
+            ]
+        )
+
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)])
+    if back_callback != "MENU_MAIN":
+        keyboard.append([InlineKeyboardButton(text="🏠 В меню", callback_data="MENU_MAIN")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def groups_keyboard(
+    db,
+    material_id: int,
+    back_callback: str | None = None,
+    origin: str | None = None,
+) -> InlineKeyboardMarkup:
     groups = db.list_groups()
     keyboard: List[List[InlineKeyboardButton]] = []
+    callback_suffix = f"_{origin}" if origin else ""
     if not groups:
         keyboard.append(
             [InlineKeyboardButton(text="(Группы не зарегистрированы)", callback_data="NOOP")]
@@ -102,9 +166,16 @@ def groups_keyboard(db, material_id: int) -> InlineKeyboardMarkup:
                 [
                     InlineKeyboardButton(
                         text=title[:45],
-                        callback_data=f"SENDTO_{material_id}_{chat_id}",
+                        callback_data=f"SENDTO_{material_id}_{chat_id}{callback_suffix}",
                     )
                 ]
             )
-    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"MATERIAL_{material_id}")])
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=back_callback or f"MATERIAL_{material_id}",
+            )
+        ]
+    )
     return InlineKeyboardMarkup(keyboard)

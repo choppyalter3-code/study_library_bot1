@@ -3,16 +3,18 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from app.handlers.materials import finalize_add_material
-from app.keyboards import add_cancel_keyboard, main_menu_keyboard
+from app.keyboards import add_cancel_keyboard, main_menu_keyboard, material_view_keyboard
 from app.services.materials_service import format_material_text, normalize_tags
 from app.utils.chat import is_private_chat
 from app.utils.context import get_db
+from app.utils.favorites import is_favorite
 from app.utils.security import require_admin
 from app.utils.users import get_or_create_user_from_update
 
 
 async def handle_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
     db = get_db(context)
+    is_admin = require_admin(update, db)
     results = db.search_materials(text, limit=10)
     user_id = get_or_create_user_from_update(db, update)
     if user_id is not None:
@@ -28,9 +30,19 @@ async def handle_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return
 
     for material in results:
+        favorite_state = (
+            user_id is not None and is_favorite(db, user_id, material.material_id)
+        )
         await update.effective_message.reply_text(
             format_material_text(material, db),
             parse_mode=ParseMode.HTML,
+            reply_markup=material_view_keyboard(
+                material.material_id,
+                is_admin=is_admin,
+                is_favorite=favorite_state,
+                back_callback="MENU_MAIN",
+                origin="MAIN",
+            ),
             disable_web_page_preview=True,
         )
 

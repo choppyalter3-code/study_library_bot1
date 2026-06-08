@@ -98,6 +98,10 @@ def contains_material(materials: Iterable, material_id: int) -> bool:
     return any(material.material_id == material_id for material in materials)
 
 
+def count_material(materials: Iterable, material_id: int) -> int:
+    return sum(1 for material in materials if material.material_id == material_id)
+
+
 def main() -> int:
     load_dotenv()
 
@@ -137,8 +141,13 @@ def main() -> int:
         assert_true(isinstance(material_id, int) and material_id > 0, "add_material failed")
 
         db.add_favorite(user_id, material_id)
+        db.add_favorite(user_id, material_id)
         favorites = db.list_favorites(user_id)
         assert_true(contains_material(favorites, material_id), "add_favorite/list_favorites failed")
+        assert_true(
+            count_material(favorites, material_id) == 1,
+            "add_favorite created duplicate favorite",
+        )
 
         db.remove_favorite(user_id, material_id)
         favorites_after_remove = db.list_favorites(user_id)
