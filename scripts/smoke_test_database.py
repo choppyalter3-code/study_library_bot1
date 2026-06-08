@@ -18,6 +18,7 @@ except ModuleNotFoundError:
 
 from app.config import load_config
 from app.database import create_database
+from app.personality.pickme_pepe import PepeMode, get_system_prompt
 from app.services.analytics_service import AnalyticsService
 from app.services.search_history_service import get_recent_search_queries, log_search_query
 from app.services.views_service import (
@@ -117,6 +118,13 @@ def contains_popular_material(materials: Iterable, material_id: int) -> bool:
     return any(item.material.material_id == material_id and item.views_count > 0 for item in materials)
 
 
+def assert_pickme_pepe_prompts() -> None:
+    for mode in PepeMode:
+        prompt = get_system_prompt(mode)
+        assert_true(isinstance(prompt, str) and prompt.strip(), f"Empty prompt for mode {mode.name}")
+        assert_true(mode.name in prompt, f"Mode name missing in prompt for {mode.name}")
+
+
 def main() -> int:
     load_dotenv()
 
@@ -125,6 +133,8 @@ def main() -> int:
     material_id: int | None = None
 
     try:
+        assert_pickme_pepe_prompts()
+
         config = load_config()
         db = create_database(config)
         print(f"Database backend: {db.backend_name}")
