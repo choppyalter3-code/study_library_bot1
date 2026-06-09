@@ -78,6 +78,8 @@ def main() -> None:
     application = build_application()
     config = application.bot_data["config"]
 
+    logger.info("RUN_MODE=%s", config.run_mode)
+
     if config.run_mode == "polling":
         logger.info("Bot starts in polling mode")
         application.run_polling(drop_pending_updates=True)
