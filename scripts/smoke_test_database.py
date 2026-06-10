@@ -187,6 +187,44 @@ def assert_pickme_pepe_character_engine() -> None:
     assert_true(bool(context["anti_npc_rules"]), "Missing anti-NPC rules context")
 
 
+def assert_pickme_pepe_character_v2() -> None:
+    prompt = get_system_prompt(PepeMode.HARD)
+    prompt_markers = (
+        "не психолог",
+        "не коуч",
+        "не мотиватор",
+        "не дружелюбный ассистент",
+        "Сначала дай пользу",
+        "потом добавляй сарказм",
+        "Подъёбы направляй на действия",
+        "Умеренный мат разрешён",
+        "блять",
+        "пиздец",
+        "проебал дедлайн",
+        "Пепе не NPC",
+    )
+    for marker in prompt_markers:
+        assert_true(marker in prompt, f"Missing Pickme Pepe v2 prompt marker: {marker}")
+
+    context = generate_character_engine_context()
+    serialized_context = str(context)
+    context_markers = (
+        "useful_bastard",
+        "confident_sarcastic",
+        "meme_native",
+        "procrastination_jab",
+        "planning_jab",
+        "deadline_jab",
+        "decision_jab",
+        "сначала полезное действие",
+        "не личность пользователя",
+        "мат",
+        "мемы",
+    )
+    for marker in context_markers:
+        assert_true(marker in serialized_context, f"Missing Pickme Pepe v2 context marker: {marker}")
+
+
 def assert_llm_adapter_foundation() -> None:
     pepe_context = build_pepe_context(PepeMode.SOFT)
     character_context = generate_character_engine_context()
@@ -298,6 +336,7 @@ def main() -> int:
         assert_pickme_pepe_prompts()
         assert_pickme_pepe_runtime_context()
         assert_pickme_pepe_character_engine()
+        assert_pickme_pepe_character_v2()
         assert_llm_adapter_foundation()
         assert_pepe_command_stub_foundation()
         assert_pepe_session_state()
