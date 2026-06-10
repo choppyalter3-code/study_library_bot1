@@ -10,6 +10,7 @@ def main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📚 Библиотека", callback_data="MENU_LIBRARY")],
         [InlineKeyboardButton(text="🔎 Поиск", callback_data="MENU_SEARCH")],
         [InlineKeyboardButton(text="⭐ Избранное", callback_data="MENU_FAVORITES")],
+        [InlineKeyboardButton(text="🐸 Пикми Пепе", callback_data="MENU_PEPE")],
     ]
 
     if is_admin:
@@ -26,6 +27,12 @@ def main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
 def back_to_main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton(text="⬅️ В главное меню", callback_data="MENU_MAIN")]]
+    )
+
+
+def pepe_mode_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(text="⬅️ Выйти из Пепе", callback_data="PEPE_EXIT")]]
     )
 
 

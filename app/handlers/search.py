@@ -3,6 +3,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from app.handlers.materials import finalize_add_material
+from app.handlers.pepe import send_pepe_response
 from app.keyboards import add_cancel_keyboard, main_menu_keyboard, material_view_keyboard
 from app.services.materials_service import format_material_text, normalize_tags
 from app.services.search_history_service import log_search_query
@@ -10,6 +11,7 @@ from app.utils.chat import is_private_chat
 from app.utils.context import get_db
 from app.utils.favorites import is_favorite
 from app.utils.security import require_admin
+from app.utils.state import is_pepe_mode_enabled
 from app.utils.users import get_or_create_user_from_update
 
 
@@ -57,6 +59,10 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     text = (update.effective_message.text or "").strip()
     if not text:
+        return
+
+    if is_pepe_mode_enabled(context):
+        await send_pepe_response(update, context, text, show_exit_keyboard=True)
         return
 
     db = get_db(context)

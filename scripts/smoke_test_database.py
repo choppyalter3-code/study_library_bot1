@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Iterable
 
@@ -40,6 +41,7 @@ from app.services.views_service import (
     get_user_material_views,
     log_material_view,
 )
+from app.utils.state import clear_interaction_state, enable_pepe_mode, is_pepe_mode_enabled
 
 
 REQUIRED_TABLES = {
@@ -54,6 +56,23 @@ REQUIRED_TABLES = {
     "material_views",
     "search_logs",
 }
+
+
+def ensure_env_default(name: str, value: str) -> None:
+    if not os.getenv(name, "").strip():
+        os.environ[name] = value
+
+
+def prepare_smoke_environment() -> None:
+    ensure_env_default("ADMIN_USER_ID", "123456789")
+    ensure_env_default("TELEGRAM_BOT_TOKEN", "123456789:smoke_test")
+    ensure_env_default("RUN_MODE", "polling")
+
+    if not os.getenv("DATABASE_URL", "").strip():
+        ensure_env_default(
+            "DATABASE_PATH",
+            str(Path(tempfile.gettempdir()) / "study_library_bot_smoke.sqlite3"),
+        )
 
 
 def assert_true(condition: bool, message: str) -> None:
@@ -241,6 +260,17 @@ def assert_pepe_command_stub_foundation() -> None:
     assert_true(all(len(chunk) <= 4000 for chunk in chunks), "Split /pepe reply chunk is too long")
 
 
+def assert_pepe_session_state() -> None:
+    context = type("SmokeContext", (), {"user_data": {}})()
+    assert_true(is_pepe_mode_enabled(context) is False, "Pepe mode must be disabled by default")
+
+    enable_pepe_mode(context)
+    assert_true(is_pepe_mode_enabled(context) is True, "Pepe mode was not enabled")
+
+    clear_interaction_state(context)
+    assert_true(is_pepe_mode_enabled(context) is False, "Pepe mode was not disabled")
+
+
 def assert_openrouter_response_parser() -> None:
     parsed_text = parse_openrouter_response(
         {
@@ -258,6 +288,7 @@ def assert_openrouter_response_parser() -> None:
 
 def main() -> int:
     load_dotenv()
+    prepare_smoke_environment()
 
     smoke_telegram_id = int(os.getenv("SMOKE_TEST_TELEGRAM_ID", "900000001"))
     user_id: int | None = None
@@ -269,6 +300,7 @@ def main() -> int:
         assert_pickme_pepe_character_engine()
         assert_llm_adapter_foundation()
         assert_pepe_command_stub_foundation()
+        assert_pepe_session_state()
         assert_openrouter_response_parser()
 
         config = load_config()

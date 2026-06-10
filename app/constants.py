@@ -7,6 +7,8 @@ ADD_FILE = 6
 
 SEARCH_WAIT_QUERY = 10
 
+PEPE_MODE_KEY = "pepe_mode_enabled"
+
 ADD_STATE_KEYS = {
     "add_category_id",
     "add_title",
@@ -22,3 +24,4 @@ ADD_STATE_KEYS = {
 }
 
 SEARCH_STATE_KEYS = {"awaiting_search_text"}
+PEPE_STATE_KEYS = {PEPE_MODE_KEY}

@@ -13,6 +13,7 @@ from app.keyboards import (
     main_menu_keyboard,
     material_view_keyboard,
     materials_keyboard,
+    pepe_mode_keyboard,
 )
 from app.services.analytics_service import format_admin_statistics
 from app.services.materials_service import format_material_text
@@ -22,7 +23,7 @@ from app.utils.chat import is_private_chat
 from app.utils.context import get_db
 from app.utils.favorites import is_favorite
 from app.utils.security import require_admin
-from app.utils.state import clear_add_state, clear_interaction_state
+from app.utils.state import clear_add_state, clear_interaction_state, enable_pepe_mode
 from app.utils.users import get_or_create_user_from_update
 
 
@@ -188,6 +189,23 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     data = query.data or ""
 
     if data == "MENU_MAIN":
+        clear_interaction_state(context)
+        await query.edit_message_text(
+            "Главное меню:",
+            reply_markup=main_menu_keyboard(is_admin=is_admin),
+        )
+        return
+
+    if data == "MENU_PEPE":
+        clear_interaction_state(context)
+        enable_pepe_mode(context)
+        await query.edit_message_text(
+            "Режим Пепе включён. Напиши сообщение, и Пепе ответит.",
+            reply_markup=pepe_mode_keyboard(),
+        )
+        return
+
+    if data == "PEPE_EXIT":
         clear_interaction_state(context)
         await query.edit_message_text(
             "Главное меню:",

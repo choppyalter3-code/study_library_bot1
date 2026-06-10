@@ -102,6 +102,18 @@ async def pepe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     user_message = " ".join(context.args).strip() if context.args else DEFAULT_PEPE_MESSAGE
+    await send_pepe_response(update, context, user_message)
+
+
+async def send_pepe_response(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_message: str,
+    show_exit_keyboard: bool = False,
+) -> None:
+    if update.effective_message is None:
+        return
+
     config = context.application.bot_data.get("config")
     openrouter_api_key, openrouter_model = _get_openrouter_settings(config)
     llm_response = await asyncio.to_thread(
@@ -110,5 +122,11 @@ async def pepe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         openrouter_api_key=openrouter_api_key,
         openrouter_model=openrouter_model,
     )
-    for chunk in split_telegram_reply(llm_response.text):
-        await update.effective_message.reply_text(chunk)
+    chunks = split_telegram_reply(llm_response.text)
+    for index, chunk in enumerate(chunks):
+        reply_markup = None
+        if show_exit_keyboard and index == len(chunks) - 1:
+            from app.keyboards import pepe_mode_keyboard
+
+            reply_markup = pepe_mode_keyboard()
+        await update.effective_message.reply_text(chunk, reply_markup=reply_markup)
