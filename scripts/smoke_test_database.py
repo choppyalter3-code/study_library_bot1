@@ -175,6 +175,7 @@ def assert_pickme_pepe_runtime_context() -> None:
 
 def assert_pickme_pepe_character_engine() -> None:
     engine = get_character_engine()
+    assert_true(bool(engine.crisis_override), "Missing crisis override")
     assert_true(bool(engine.personality_modes), "Missing personality modes")
     assert_true(bool(engine.personality_mode_rules), "Missing personality mode rules")
     assert_true(bool(engine.tone_variants), "Missing tone variants")
@@ -183,6 +184,7 @@ def assert_pickme_pepe_character_engine() -> None:
     assert_true(bool(engine.anti_npc_rules), "Missing anti-NPC rules")
 
     context = generate_character_engine_context()
+    assert_true(bool(context["crisis_override"]), "Missing crisis override context")
     assert_true(bool(context["personality_modes"]), "Missing personality modes context")
     assert_true(bool(context["personality_mode_rules"]), "Missing personality mode rules context")
     assert_true(bool(context["tone_variants"]), "Missing tone variants context")
@@ -408,6 +410,77 @@ def assert_pickme_pepe_anti_repetition_v41() -> None:
         assert_true(marker in serialized_context, f"Missing Pickme Pepe v4.1 context marker: {marker}")
 
 
+def assert_pickme_pepe_crisis_override() -> None:
+    prompt = get_system_prompt(PepeMode.HARD)
+    prompt_markers = (
+        "Crisis / Emotional Support Override",
+        "кризисное или эмоционально тяжёлое",
+        "тревога",
+        "паника",
+        "расставание",
+        "подавленность",
+        "я хочу умереть",
+        "не хочу жить",
+        "мне плохо",
+        "я не справляюсь",
+        "хочу исчезнуть",
+        "я себя ненавижу",
+        "мне страшно за себя",
+        "Отключай агрессивные архетипы",
+        "Goblin Pepe, Doom Pepe, Raid Boss Pepe",
+        "Dungeon Meme Pepe",
+        "Support Pepe, Ancient Pepe и Good Boy Pepe",
+        "выслушай и признай состояние пользователя",
+        "Не переводи разговор сразу на учёбу",
+        "Не шути первым сообщением",
+        "Не матерись агрессивно",
+        "Не обесценивай проблему",
+        "не оставаться одному",
+        "написать близкому человеку",
+        "другу или админу",
+        "срочной помощью",
+        "местным экстренным службам",
+        "владельцем или админом бота",
+        "сформулировать сообщение Павлу/админу/другу",
+        "не ставь диагнозы",
+        "не обещай вылечить",
+        "не заменяй специалиста",
+        "не спорь с переживаниями пользователя",
+        "Ладно, без подъёбов. Тебя сейчас накрыло",
+        "Я рядом в чате. Сейчас важно не оставаться одному.",
+    )
+    for marker in prompt_markers:
+        assert_true(marker in prompt, f"Missing Pickme Pepe crisis prompt marker: {marker}")
+
+    context = generate_character_engine_context()
+    serialized_context = str(context)
+    context_markers = (
+        "crisis_override",
+        "Crisis / Emotional Support Override срабатывает раньше обычных personality modes",
+        "disabled_modes",
+        "Goblin Pepe",
+        "Doom Pepe",
+        "Raid Boss Pepe",
+        "Dungeon Meme Pepe",
+        "preferred_modes",
+        "Support Pepe",
+        "Ancient Pepe",
+        "Good Boy Pepe softly",
+        "Не переводить разговор сразу на учёбу",
+        "Не шутить первым сообщением",
+        "Не материться агрессивно",
+        "Не обесценивать проблему",
+        "местным экстренным службам",
+        "Павлу/админу/другу",
+        "Не ставить диагнозы",
+        "Не обещать вылечить",
+        "Не заменять специалиста",
+        "Не спорить с переживаниями пользователя",
+    )
+    for marker in context_markers:
+        assert_true(marker in serialized_context, f"Missing Pickme Pepe crisis context marker: {marker}")
+
+
 def assert_llm_adapter_foundation() -> None:
     pepe_context = build_pepe_context(PepeMode.SOFT)
     character_context = generate_character_engine_context()
@@ -522,6 +595,7 @@ def main() -> int:
         assert_pickme_pepe_character_v3()
         assert_pickme_pepe_personality_modes_v4()
         assert_pickme_pepe_anti_repetition_v41()
+        assert_pickme_pepe_crisis_override()
         assert_llm_adapter_foundation()
         assert_pepe_command_stub_foundation()
         assert_pepe_session_state()
