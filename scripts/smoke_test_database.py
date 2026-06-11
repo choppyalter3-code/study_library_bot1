@@ -175,12 +175,16 @@ def assert_pickme_pepe_runtime_context() -> None:
 
 def assert_pickme_pepe_character_engine() -> None:
     engine = get_character_engine()
+    assert_true(bool(engine.personality_modes), "Missing personality modes")
+    assert_true(bool(engine.personality_mode_rules), "Missing personality mode rules")
     assert_true(bool(engine.tone_variants), "Missing tone variants")
     assert_true(bool(engine.sarcasm_variants), "Missing sarcasm variants")
     assert_true(bool(engine.jab_variants), "Missing jab variants")
     assert_true(bool(engine.anti_npc_rules), "Missing anti-NPC rules")
 
     context = generate_character_engine_context()
+    assert_true(bool(context["personality_modes"]), "Missing personality modes context")
+    assert_true(bool(context["personality_mode_rules"]), "Missing personality mode rules context")
     assert_true(bool(context["tone_variants"]), "Missing tone variants context")
     assert_true(bool(context["sarcasm_variants"]), "Missing sarcasm variants context")
     assert_true(bool(context["jab_variants"]), "Missing jab variants context")
@@ -260,6 +264,83 @@ def assert_pickme_pepe_character_v3() -> None:
     )
     for marker in context_markers:
         assert_true(marker in serialized_context, f"Missing Pickme Pepe v3 context marker: {marker}")
+
+
+def assert_pickme_pepe_personality_modes_v4() -> None:
+    prompt = get_system_prompt(PepeMode.HARD)
+    prompt_markers = (
+        "Personality Modes",
+        "не отдельные персонажи",
+        "настроения одного и того же Пепе",
+        "Goblin Pepe 30%",
+        "Slay Pepe 20%",
+        "Ancient Pepe 15%",
+        "Meme Pepe 15%",
+        "Support Pepe 10%",
+        "Doom Pepe 5%",
+        "Good Boy Pepe 3%",
+        "Dungeon Meme Pepe 1%",
+        "Raid Boss Pepe 1%",
+        "зай",
+        "иконка",
+        "хороший мальчик",
+        "очень хороший мальчик",
+        "горжусь тобой чуть больше чем должен",
+        "good boy",
+        "come here",
+        "who's a good boy?",
+        "без сексуального контекста",
+        "не выбираются чистым рандомом",
+        "Стресс пользователя повышает",
+        "Мемы и рофлы повышают",
+        "Достижения повышают",
+        "Пепе не должен застревать",
+        "Dungeon Meme Pepe должен оставаться крайне редким",
+        "Good Boy Pepe должен оставаться редким",
+    )
+    for marker in prompt_markers:
+        assert_true(marker in prompt, f"Missing Pickme Pepe v4 prompt marker: {marker}")
+
+    engine = get_character_engine()
+    expected_weights = {
+        "Goblin Pepe": 30,
+        "Slay Pepe": 20,
+        "Ancient Pepe": 15,
+        "Meme Pepe": 15,
+        "Support Pepe": 10,
+        "Doom Pepe": 5,
+        "Good Boy Pepe": 3,
+        "Dungeon Meme Pepe": 1,
+        "Raid Boss Pepe": 1,
+    }
+    actual_weights = {mode.name: mode.base_weight_percent for mode in engine.personality_modes}
+    assert_true(actual_weights == expected_weights, "Invalid Pickme Pepe v4 personality mode weights")
+    assert_true(sum(actual_weights.values()) == 100, "Pickme Pepe v4 personality mode weights must total 100")
+
+    context = generate_character_engine_context()
+    serialized_context = str(context)
+    context_markers = (
+        "personality_modes",
+        "personality_mode_rules",
+        "Goblin Pepe",
+        "Slay Pepe",
+        "Ancient Pepe",
+        "Meme Pepe",
+        "Support Pepe",
+        "Doom Pepe",
+        "Good Boy Pepe",
+        "Dungeon Meme Pepe",
+        "Raid Boss Pepe",
+        "Стресс пользователя повышает шанс Support Pepe",
+        "Мемы, рофлы и интернет-сленг повышают шанс Meme Pepe",
+        "Достижения пользователя повышают шанс Good Boy Pepe",
+        "не должен застревать",
+        "крайне редким",
+        "без сексуального контекста",
+        "runtime-контекст",
+    )
+    for marker in context_markers:
+        assert_true(marker in serialized_context, f"Missing Pickme Pepe v4 context marker: {marker}")
 
 
 def assert_llm_adapter_foundation() -> None:
@@ -374,6 +455,7 @@ def main() -> int:
         assert_pickme_pepe_runtime_context()
         assert_pickme_pepe_character_engine()
         assert_pickme_pepe_character_v3()
+        assert_pickme_pepe_personality_modes_v4()
         assert_llm_adapter_foundation()
         assert_pepe_command_stub_foundation()
         assert_pepe_session_state()
