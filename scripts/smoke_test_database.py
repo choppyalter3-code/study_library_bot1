@@ -343,6 +343,71 @@ def assert_pickme_pepe_personality_modes_v4() -> None:
         assert_true(marker in serialized_context, f"Missing Pickme Pepe v4 context marker: {marker}")
 
 
+def assert_pickme_pepe_anti_repetition_v41() -> None:
+    prompt = get_system_prompt(PepeMode.HARD)
+    prompt_markers = (
+        "Anti-repetition",
+        "не должен начинать два соседних ответа одинаковым вайбом",
+        "Ну охуенно",
+        "Ну и классика",
+        "Охуенно",
+        "Классика",
+        "разрешены, но редко",
+        "предыдущий ответ был в жёстком Goblin Pepe или Raid Boss Pepe tone",
+        "Slay Pepe, Ancient Pepe, Support Pepe или Meme Pepe",
+        "Emotional override",
+        "тревогу, панику, страх, стресс, завал или усталость",
+        "повышай Support Pepe",
+        "снижай Goblin Pepe, Raid Boss Pepe и Doom Pepe",
+        "не начинай с 'ну охуенно'",
+        "Achievement override",
+        "сдал экзамен",
+        "закрыл долг",
+        "сделал задание",
+        "подготовился",
+        "повышай Good Boy Pepe, Slay Pepe и Support Pepe",
+        "Meme uncertainty rule",
+        "не выдумывай факты, группы, книги, проекты или протоколы",
+        "Не добавляй веб-поиск",
+        "без веб-поиска можно промахнуться",
+        "попроси контекст",
+        "Брат, дедлайн уже снял обувь и живёт у тебя дома",
+        "Зай, ты устроил академический перформанс. Но ладно, спасаем.",
+        "Я видел такие дедлайны. Обычно они заканчиваются кофе, торгом с богами и таблицей приоритетов.",
+        "Ладно, без подъёбов. Сначала дышим, потом режем задачу на куски.",
+        "Это звучит как brainrot, но допустим. Контекст дай, интернет-археолог.",
+        "Хороший мальчик. Наконец-то мозг использовался по назначению.",
+    )
+    for marker in prompt_markers:
+        assert_true(marker in prompt, f"Missing Pickme Pepe v4.1 prompt marker: {marker}")
+
+    context = generate_character_engine_context()
+    serialized_context = str(context)
+    context_markers = (
+        "Пепе не должен начинать два соседних ответа одинаковым вайбом",
+        "Фразы 'Ну охуенно', 'Ну и классика', 'Охуенно' и 'Классика' разрешены, но редко",
+        "Если предыдущий ответ был в жёстком Goblin Pepe или Raid Boss Pepe tone",
+        "Emotional override",
+        "тревога, паника, страх, стресс, завал и усталость",
+        "повышают Support Pepe",
+        "снижают Goblin Pepe, Raid Boss Pepe и Doom Pepe",
+        "Achievement override",
+        "'сдал экзамен', 'закрыл долг', 'сделал задание' и 'подготовился'",
+        "повышают Good Boy Pepe, Slay Pepe и Support Pepe",
+        "Meme uncertainty rule",
+        "не выдумывать факты, группы, книги, проекты или протоколы",
+        "без веб-поиска можно промахнуться",
+        "Брат, дедлайн уже снял обувь и живёт у тебя дома",
+        "Зай, ты устроил академический перформанс. Но ладно, спасаем.",
+        "Я видел такие дедлайны. Обычно они заканчиваются кофе, торгом с богами и таблицей приоритетов.",
+        "Ладно, без подъёбов. Сначала дышим, потом режем задачу на куски.",
+        "Это звучит как brainrot, но допустим. Контекст дай, интернет-археолог.",
+        "Хороший мальчик. Наконец-то мозг использовался по назначению.",
+    )
+    for marker in context_markers:
+        assert_true(marker in serialized_context, f"Missing Pickme Pepe v4.1 context marker: {marker}")
+
+
 def assert_llm_adapter_foundation() -> None:
     pepe_context = build_pepe_context(PepeMode.SOFT)
     character_context = generate_character_engine_context()
@@ -456,6 +521,7 @@ def main() -> int:
         assert_pickme_pepe_character_engine()
         assert_pickme_pepe_character_v3()
         assert_pickme_pepe_personality_modes_v4()
+        assert_pickme_pepe_anti_repetition_v41()
         assert_llm_adapter_foundation()
         assert_pepe_command_stub_foundation()
         assert_pepe_session_state()
